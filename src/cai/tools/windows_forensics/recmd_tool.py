@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Iterable
 
 from cai.sdk.agents import function_tool
+from cai.tools.forensics_common import enrich_run_result, format_plan_output_generic
 
 
 def _get_windows_tools_dir() -> Path:
@@ -37,59 +38,27 @@ def _run_command(args: list[str], timeout_s: int = 300) -> dict:
             encoding="utf-8",
             errors="replace",
         )
-        return {
+        return enrich_run_result({
             "ok": proc.returncode == 0,
             "args": args,
             "exit_code": proc.returncode,
             "stdout": proc.stdout[:12000],
             "stderr": proc.stderr[:12000],
             "duration_ms": int((time.time() - start) * 1000),
-        }
+        }, args=args)
     except subprocess.TimeoutExpired as exc:
-        return {
+        return enrich_run_result({
             "ok": False,
             "args": args,
             "exit_code": -1,
             "stdout": (exc.stdout or "")[:12000],
             "stderr": f"Timeout after {timeout_s}s",
             "duration_ms": int((time.time() - start) * 1000),
-        }
+        }, args=args)
 
 
 def _format_plan_output(result: dict) -> str:
-    if not result.get("ok"):
-        searched = result.get("searched_paths", [])
-        searched_text = "\n".join(f"- {p}" for p in searched) if searched else "- (none)"
-        return (
-            "Status: error\n"
-            "Tool: recmd\n"
-            f"Message: {result.get('error', 'unknown error')}\n"
-            f"Searched paths:\n{searched_text}"
-        )
-
-    lines = [
-        "Status: ok",
-        "Tool: recmd",
-        f"Mode: {result.get('mode', 'plan_only')}",
-        f"Execute: {result.get('execute', False)}",
-        f"Command: {' '.join(result.get('args', []))}",
-        f"Notes: {result.get('notes', '')}",
-    ]
-
-    run_result = result.get("run_result")
-    if run_result:
-        lines.extend(
-            [
-                "Execution:",
-                f"- ok: {run_result.get('ok')}",
-                f"- exit_code: {run_result.get('exit_code')}",
-                f"- duration_ms: {run_result.get('duration_ms')}",
-                f"- stdout: {run_result.get('stdout', '').strip() or '(empty)'}",
-                f"- stderr: {run_result.get('stderr', '').strip() or '(empty)'}",
-            ]
-        )
-
-    return "\n".join(lines)
+    return format_plan_output_generic(result=result, tool_name="recmd")
 
 
 def build_recmd_plan_dict(hive_dir: str, execute: bool = False, timeout_s: int = 300) -> dict:
