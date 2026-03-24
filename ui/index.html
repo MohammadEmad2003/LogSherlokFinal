@@ -1,0 +1,401 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Autonomous Forensic Orchestrator</title>
+        <link rel="stylesheet" href="styles.css" />
+        <link
+            href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap"
+            rel="stylesheet"
+        />
+    </head>
+    <body>
+        <div class="app-container">
+            <!-- Header -->
+            <header class="main-header">
+                <div class="logo">
+                    <div class="logo-icon">
+                        <svg
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                        >
+                            <path d="M12 2L2 7l10 5 10-5-10-5z" />
+                            <path d="M2 17l10 5 10-5" />
+                            <path d="M2 12l10 5 10-5" />
+                        </svg>
+                    </div>
+                    <span class="logo-text">ForensicAI</span>
+                </div>
+                <nav class="main-nav">
+                    <a href="#" class="nav-link active">Upload</a>
+                    <a href="#" class="nav-link" id="nav-sessions">Sessions</a>
+                    <a href="#" class="nav-link" id="nav-tools">Tools</a>
+                </nav>
+                <div class="header-actions">
+                    <span class="status-indicator online">
+                        <span class="status-dot"></span>
+                        System Online
+                    </span>
+                </div>
+            </header>
+
+            <!-- Main Content -->
+            <main class="main-content">
+                <!-- Hero Section -->
+                <section class="hero-section">
+                    <div class="hero-content">
+                        <h1 class="hero-title">
+                            <span class="gradient-text">Autonomous</span>
+                            Forensic Orchestrator
+                        </h1>
+                        <p class="hero-subtitle">
+                            AI-powered digital forensics platform that
+                            autonomously analyzes artifacts, correlates
+                            evidence, and generates incident timelines with
+                            attack hypotheses.
+                        </p>
+                        <div class="hero-features">
+                            <div class="feature-badge">
+                                <svg
+                                    viewBox="0 0 24 24"
+                                    fill="currentColor"
+                                    width="16"
+                                    height="16"
+                                >
+                                    <path
+                                        d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"
+                                    />
+                                </svg>
+                                Memory Analysis
+                            </div>
+                            <div class="feature-badge">
+                                <svg
+                                    viewBox="0 0 24 24"
+                                    fill="currentColor"
+                                    width="16"
+                                    height="16"
+                                >
+                                    <path
+                                        d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"
+                                    />
+                                </svg>
+                                Malware Detection
+                            </div>
+                            <div class="feature-badge">
+                                <svg
+                                    viewBox="0 0 24 24"
+                                    fill="currentColor"
+                                    width="16"
+                                    height="16"
+                                >
+                                    <path
+                                        d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"
+                                    />
+                                </svg>
+                                MITRE ATT&CK Mapping
+                            </div>
+                            <div class="feature-badge">
+                                <svg
+                                    viewBox="0 0 24 24"
+                                    fill="currentColor"
+                                    width="16"
+                                    height="16"
+                                >
+                                    <path
+                                        d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"
+                                    />
+                                </svg>
+                                Threat Intelligence
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Upload Section -->
+                <section class="upload-section">
+                    <div class="upload-container">
+                        <div class="upload-card">
+                            <div class="upload-header">
+                                <h2>Start Investigation</h2>
+                                <p>
+                                    Upload a forensic artifact to begin
+                                    autonomous analysis
+                                </p>
+                            </div>
+
+                            <form id="upload-form" class="upload-form">
+                                <!-- Dropzone -->
+                                <div class="dropzone" id="dropzone">
+                                    <div class="dropzone-content">
+                                        <div class="dropzone-icon">
+                                            <svg
+                                                viewBox="0 0 24 24"
+                                                fill="none"
+                                                stroke="currentColor"
+                                                stroke-width="2"
+                                            >
+                                                <path
+                                                    d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"
+                                                />
+                                                <polyline
+                                                    points="17 8 12 3 7 8"
+                                                />
+                                                <line
+                                                    x1="12"
+                                                    y1="3"
+                                                    x2="12"
+                                                    y2="15"
+                                                />
+                                            </svg>
+                                        </div>
+                                        <p class="dropzone-text">
+                                            <span class="dropzone-highlight"
+                                                >Click to upload</span
+                                            >
+                                            or drag and drop
+                                        </p>
+                                        <p class="dropzone-hint">
+                                            Memory dumps (.raw, .mem, .dmp),
+                                            disk images (.img, .dd), event logs
+                                            (.evtx), network captures (.pcap),
+                                            or malware samples
+                                        </p>
+                                    </div>
+                                    <input
+                                        type="file"
+                                        id="file-input"
+                                        class="file-input"
+                                        accept="*"
+                                    />
+                                </div>
+
+                                <!-- File Selected Preview -->
+                                <div
+                                    class="file-preview"
+                                    id="file-preview"
+                                    style="display: none"
+                                >
+                                    <div class="file-info">
+                                        <div class="file-icon">
+                                            <svg
+                                                viewBox="0 0 24 24"
+                                                fill="currentColor"
+                                            >
+                                                <path
+                                                    d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6z"
+                                                />
+                                                <polyline
+                                                    points="14 2 14 8 20 8"
+                                                    fill="none"
+                                                    stroke="currentColor"
+                                                />
+                                            </svg>
+                                        </div>
+                                        <div class="file-details">
+                                            <span
+                                                class="file-name"
+                                                id="file-name"
+                                                >-</span
+                                            >
+                                            <span
+                                                class="file-size"
+                                                id="file-size"
+                                                >-</span
+                                            >
+                                        </div>
+                                        <button
+                                            type="button"
+                                            class="remove-file"
+                                            id="remove-file"
+                                        >
+                                            <svg
+                                                viewBox="0 0 24 24"
+                                                fill="none"
+                                                stroke="currentColor"
+                                                stroke-width="2"
+                                            >
+                                                <line
+                                                    x1="18"
+                                                    y1="6"
+                                                    x2="6"
+                                                    y2="18"
+                                                />
+                                                <line
+                                                    x1="6"
+                                                    y1="6"
+                                                    x2="18"
+                                                    y2="18"
+                                                />
+                                            </svg>
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <!-- Options -->
+                                <div class="upload-options">
+                                    <div class="option-group">
+                                        <label for="artifact-type"
+                                            >Artifact Type</label
+                                        >
+                                        <select
+                                            id="artifact-type"
+                                            name="artifact_type"
+                                        >
+                                            <option value="auto">
+                                                Auto-detect
+                                            </option>
+                                            <option value="memory_dump">
+                                                Memory Dump
+                                            </option>
+                                            <option value="disk_image">
+                                                Disk Image
+                                            </option>
+                                            <option value="evtx">
+                                                Windows Event Logs
+                                            </option>
+                                            <option value="pcap">
+                                                Network Capture
+                                            </option>
+                                            <option value="malware_sample">
+                                                Malware Sample
+                                            </option>
+                                        </select>
+                                    </div>
+                                    <div class="option-group">
+                                        <label for="description"
+                                            >Description (Optional)</label
+                                        >
+                                        <input
+                                            type="text"
+                                            id="description"
+                                            name="description"
+                                            placeholder="e.g., Suspicious workstation memory dump"
+                                        />
+                                    </div>
+                                </div>
+
+                                <!-- Submit Button -->
+                                <button
+                                    type="submit"
+                                    class="submit-btn"
+                                    id="submit-btn"
+                                    disabled
+                                >
+                                    <span class="btn-text">Start Analysis</span>
+                                    <span
+                                        class="btn-loader"
+                                        style="display: none"
+                                    >
+                                        <svg
+                                            class="spinner"
+                                            viewBox="0 0 24 24"
+                                        >
+                                            <circle
+                                                cx="12"
+                                                cy="12"
+                                                r="10"
+                                                fill="none"
+                                                stroke="currentColor"
+                                                stroke-width="3"
+                                            />
+                                        </svg>
+                                        Uploading...
+                                    </span>
+                                </button>
+                            </form>
+                        </div>
+
+                        <!-- Supported Tools Panel -->
+                        <div class="tools-panel">
+                            <h3>Autonomous Analysis Pipeline</h3>
+                            <div class="tools-grid">
+                                <div class="tool-category">
+                                    <h4>Memory Forensics</h4>
+                                    <ul>
+                                        <li>Volatility3 - Process analysis</li>
+                                        <li>
+                                            Volatility3 - Network connections
+                                        </li>
+                                        <li>
+                                            Volatility3 - Malfind injection
+                                            detection
+                                        </li>
+                                        <li>
+                                            Volatility3 - DLL/Handle analysis
+                                        </li>
+                                    </ul>
+                                </div>
+                                <div class="tool-category">
+                                    <h4>Malware Analysis</h4>
+                                    <ul>
+                                        <li>YARA - Signature detection</li>
+                                        <li>FLOSS - String deobfuscation</li>
+                                        <li>PE/ELF Analysis</li>
+                                        <li>Strings extraction</li>
+                                    </ul>
+                                </div>
+                                <div class="tool-category">
+                                    <h4>Windows Forensics</h4>
+                                    <ul>
+                                        <li>Chainsaw - Sigma hunting</li>
+                                        <li>Hayabusa - Timeline generation</li>
+                                        <li>Registry analysis (RECmd)</li>
+                                        <li>Prefetch analysis (PECmd)</li>
+                                    </ul>
+                                </div>
+                                <div class="tool-category">
+                                    <h4>Threat Intelligence</h4>
+                                    <ul>
+                                        <li>MalwareBazaar lookup</li>
+                                        <li>AlienVault OTX</li>
+                                        <li>MITRE ATT&CK mapping</li>
+                                        <li>STIX 2.1 export</li>
+                                    </ul>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+            </main>
+
+            <!-- Sessions Modal -->
+            <div class="modal" id="sessions-modal">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h2>Investigation Sessions</h2>
+                        <button class="modal-close" id="close-sessions-modal">
+                            &times;
+                        </button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="sessions-list" id="sessions-list">
+                            <p class="no-sessions">Loading sessions...</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Tools Modal -->
+            <div class="modal" id="tools-modal">
+                <div class="modal-content modal-large">
+                    <div class="modal-header">
+                        <h2>Available Forensic Tools</h2>
+                        <button class="modal-close" id="close-tools-modal">
+                            &times;
+                        </button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="tools-list" id="tools-list">
+                            <p>Loading tools...</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <script src="app.js"></script>
+    </body>
+</html>

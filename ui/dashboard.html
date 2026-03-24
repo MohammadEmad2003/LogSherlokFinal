@@ -1,0 +1,438 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Investigation Dashboard - ForensicAI</title>
+        <link rel="stylesheet" href="styles.css" />
+        <link
+            href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap"
+            rel="stylesheet"
+        />
+        <!-- Chart.js for real-time charts -->
+        <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+        <!-- Vis.js for network graph -->
+        <script src="https://unpkg.com/vis-network@9.1.6/standalone/umd/vis-network.min.js"></script>
+        <!-- jsPDF for PDF generation -->
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    </head>
+    <body>
+        <div class="dashboard-container">
+            <!-- Header -->
+            <header class="dashboard-header">
+                <div class="header-left">
+                    <a href="index.html" class="back-link">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M19 12H5M12 19l-7-7 7-7" />
+                        </svg>
+                        Back
+                    </a>
+                    <div class="session-info">
+                        <span class="session-label">Session:</span>
+                        <span class="session-id" id="session-id">-</span>
+                    </div>
+                </div>
+                <div class="header-center">
+                    <h1 class="dashboard-title">Investigation Dashboard</h1>
+                </div>
+                <div class="header-right">
+                    <div class="connection-status" id="connection-status">
+                        <span class="status-dot disconnected"></span>
+                        <span class="status-text">Connecting...</span>
+                    </div>
+                    <!-- View Toggle Buttons -->
+                    <div class="view-toggle">
+                        <button class="view-btn active" data-view="main" title="Main View">
+                            <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18">
+                                <path d="M3 13h8V3H3v10zm0 8h8v-6H3v6zm10 0h8V11h-8v10zm0-18v6h8V3h-8z"/>
+                            </svg>
+                        </button>
+                        <button class="view-btn" data-view="network" title="Network Graph">
+                            <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18">
+                                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/>
+                            </svg>
+                        </button>
+                        <button class="view-btn" data-view="mitre" title="MITRE ATT&CK Matrix">
+                            <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18">
+                                <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/>
+                            </svg>
+                        </button>
+                        <button class="view-btn" data-view="charts" title="Analytics Charts">
+                            <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18">
+                                <path d="M3.5 18.49l6-6.01 4 4L22 6.92l-1.41-1.41-7.09 7.97-4-4L2 16.99z"/>
+                            </svg>
+                        </button>
+                    </div>
+                    <button class="btn-icon" id="btn-export" title="Export Report">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                            <polyline points="7 10 12 15 17 10" />
+                            <line x1="12" y1="15" x2="12" y2="3" />
+                        </svg>
+                    </button>
+                </div>
+            </header>
+
+            <!-- Progress Bar -->
+            <div class="progress-section">
+                <div class="progress-header">
+                    <span class="progress-phase" id="progress-phase">Initializing...</span>
+                    <span class="progress-percent" id="progress-percent">0%</span>
+                </div>
+                <div class="progress-bar">
+                    <div class="progress-fill" id="progress-fill" style="width: 0%"></div>
+                </div>
+            </div>
+
+            <!-- Main Dashboard Grid (Default View) -->
+            <div class="dashboard-view active" id="view-main">
+                <div class="dashboard-grid">
+                    <!-- Left Column: Steps Feed -->
+                    <div class="panel steps-panel">
+                        <div class="panel-header">
+                            <h2>
+                                <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20">
+                                    <path d="M3 13h2v-2H3v2zm0 4h2v-2H3v2zm0-8h2V7H3v2zm4 4h14v-2H7v2zm0 4h14v-2H7v2zM7 7v2h14V7H7z"/>
+                                </svg>
+                                Analysis Steps
+                            </h2>
+                            <span class="badge" id="steps-count">0</span>
+                        </div>
+                        <div class="panel-content steps-feed" id="steps-feed">
+                            <div class="empty-state">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <circle cx="12" cy="12" r="10" />
+                                    <polyline points="12 6 12 12 16 14" />
+                                </svg>
+                                <p>Waiting for analysis to begin...</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Center Column: Evidence & Timeline -->
+                    <div class="center-column">
+                        <!-- Evidence Panel -->
+                        <div class="panel evidence-panel">
+                            <div class="panel-header">
+                                <h2>
+                                    <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20">
+                                        <path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4z"/>
+                                    </svg>
+                                    Evidence Collected
+                                </h2>
+                                <span class="badge" id="evidence-count">0</span>
+                            </div>
+                            <div class="panel-content evidence-grid" id="evidence-grid">
+                                <div class="empty-state">
+                                    <p>No evidence collected yet</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Timeline Panel -->
+                        <div class="panel timeline-panel">
+                            <div class="panel-header">
+                                <h2>
+                                    <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20">
+                                        <path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z"/>
+                                    </svg>
+                                    Attack Timeline
+                                </h2>
+                            </div>
+                            <div class="panel-content timeline-feed" id="timeline-feed">
+                                <div class="empty-state">
+                                    <p>Timeline will populate as events are correlated</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Right Column: MITRE, Hypotheses, Chat -->
+                    <div class="right-column">
+                        <!-- MITRE Panel -->
+                        <div class="panel mitre-panel">
+                            <div class="panel-header">
+                                <h2>
+                                    <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20">
+                                        <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
+                                    </svg>
+                                    MITRE ATT&CK
+                                </h2>
+                                <span class="badge" id="mitre-count">0</span>
+                            </div>
+                            <div class="panel-content mitre-grid" id="mitre-grid">
+                                <div class="empty-state">
+                                    <p>Techniques will map as analysis progresses</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Hypotheses Panel -->
+                        <div class="panel hypotheses-panel">
+                            <div class="panel-header">
+                                <h2>
+                                    <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20">
+                                        <path d="M9 21c0 .55.45 1 1 1h4c.55 0 1-.45 1-1v-1H9v1zm3-19C8.14 2 5 5.14 5 9c0 2.38 1.19 4.47 3 5.74V17c0 .55.45 1 1 1h6c.55 0 1-.45 1-1v-2.26c1.81-1.27 3-3.36 3-5.74 0-3.86-3.14-7-7-7z"/>
+                                    </svg>
+                                    Attack Hypotheses
+                                </h2>
+                            </div>
+                            <div class="panel-content hypotheses-list" id="hypotheses-list">
+                                <div class="empty-state">
+                                    <p>Hypotheses will generate after analysis</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- LLM Chat Panel (Enhanced) -->
+                        <div class="panel chat-panel llm-chat">
+                            <div class="panel-header">
+                                <h2>
+                                    <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20">
+                                        <path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/>
+                                    </svg>
+                                    AI Forensic Assistant
+                                </h2>
+                                <span class="ai-badge">GPT-4</span>
+                            </div>
+                            <div class="panel-content chat-messages" id="chat-messages">
+                                <div class="chat-message system">
+                                    <div class="chat-avatar ai">
+                                        <svg viewBox="0 0 24 24" fill="currentColor">
+                                            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/>
+                                        </svg>
+                                    </div>
+                                    <div class="chat-content">
+                                        <p>Hello! I'm your AI forensic assistant. Ask me questions about the investigation, such as:</p>
+                                        <ul class="chat-suggestions">
+                                            <li onclick="askQuestion('What processes connected to external IPs?')">What processes connected to external IPs?</li>
+                                            <li onclick="askQuestion('Summarize the malicious activity found')">Summarize the malicious activity found</li>
+                                            <li onclick="askQuestion('What are the persistence mechanisms?')">What are the persistence mechanisms?</li>
+                                            <li onclick="askQuestion('Show me credential theft indicators')">Show me credential theft indicators</li>
+                                        </ul>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="chat-input-container">
+                                <input type="text" id="chat-input" placeholder="Ask about the investigation..." class="chat-input" />
+                                <button id="chat-send" class="chat-send-btn">
+                                    <svg viewBox="0 0 24 24" fill="currentColor">
+                                        <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
+                                    </svg>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Network Graph View -->
+            <div class="dashboard-view" id="view-network">
+                <div class="network-container">
+                    <div class="network-header">
+                        <h2>
+                            <svg viewBox="0 0 24 24" fill="currentColor" width="24" height="24">
+                                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z"/>
+                            </svg>
+                            Network Relationship Graph
+                        </h2>
+                        <div class="network-legend">
+                            <span class="legend-item"><span class="legend-dot process"></span> Process</span>
+                            <span class="legend-item"><span class="legend-dot ip"></span> IP Address</span>
+                            <span class="legend-item"><span class="legend-dot domain"></span> Domain</span>
+                            <span class="legend-item"><span class="legend-dot file"></span> File</span>
+                            <span class="legend-item"><span class="legend-dot malware"></span> Malware</span>
+                        </div>
+                        <div class="network-controls">
+                            <button class="btn btn-secondary btn-sm" id="network-fit">Fit View</button>
+                            <button class="btn btn-secondary btn-sm" id="network-physics">Toggle Physics</button>
+                        </div>
+                    </div>
+                    <div id="network-graph" class="network-graph"></div>
+                    <div class="network-stats">
+                        <div class="stat-card">
+                            <span class="stat-value" id="stat-nodes">0</span>
+                            <span class="stat-label">Nodes</span>
+                        </div>
+                        <div class="stat-card">
+                            <span class="stat-value" id="stat-edges">0</span>
+                            <span class="stat-label">Connections</span>
+                        </div>
+                        <div class="stat-card">
+                            <span class="stat-value" id="stat-clusters">0</span>
+                            <span class="stat-label">Clusters</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- MITRE ATT&CK Matrix View -->
+            <div class="dashboard-view" id="view-mitre">
+                <div class="mitre-matrix-container">
+                    <div class="mitre-matrix-header">
+                        <h2>
+                            <svg viewBox="0 0 24 24" fill="currentColor" width="24" height="24">
+                                <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2z"/>
+                            </svg>
+                            MITRE ATT&CK Matrix
+                        </h2>
+                        <div class="mitre-coverage">
+                            <span class="coverage-label">Coverage:</span>
+                            <span class="coverage-value" id="mitre-coverage-percent">0%</span>
+                            <span class="coverage-detected">(<span id="mitre-detected-count">0</span> techniques detected)</span>
+                        </div>
+                    </div>
+                    <div class="mitre-matrix" id="mitre-matrix">
+                        <!-- Matrix will be dynamically generated -->
+                    </div>
+                </div>
+            </div>
+
+            <!-- Charts View -->
+            <div class="dashboard-view" id="view-charts">
+                <div class="charts-grid">
+                    <!-- Threat Score Over Time -->
+                    <div class="chart-panel">
+                        <div class="chart-header">
+                            <h3>Threat Score Over Time</h3>
+                        </div>
+                        <div class="chart-container">
+                            <canvas id="threat-score-chart"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- Evidence by Type -->
+                    <div class="chart-panel">
+                        <div class="chart-header">
+                            <h3>Evidence Distribution</h3>
+                        </div>
+                        <div class="chart-container">
+                            <canvas id="evidence-chart"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- Tools Usage -->
+                    <div class="chart-panel">
+                        <div class="chart-header">
+                            <h3>Tools Executed</h3>
+                        </div>
+                        <div class="chart-container">
+                            <canvas id="tools-chart"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- MITRE Tactics Coverage -->
+                    <div class="chart-panel">
+                        <div class="chart-header">
+                            <h3>MITRE Tactics Coverage</h3>
+                        </div>
+                        <div class="chart-container">
+                            <canvas id="mitre-chart"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- Severity Distribution -->
+                    <div class="chart-panel">
+                        <div class="chart-header">
+                            <h3>Event Severity Distribution</h3>
+                        </div>
+                        <div class="chart-container">
+                            <canvas id="severity-chart"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- Analysis Timeline -->
+                    <div class="chart-panel wide">
+                        <div class="chart-header">
+                            <h3>Analysis Progress Timeline</h3>
+                        </div>
+                        <div class="chart-container">
+                            <canvas id="timeline-chart"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Summary Modal -->
+            <div class="modal" id="summary-modal">
+                <div class="modal-content modal-large">
+                    <div class="modal-header">
+                        <h2>Investigation Report</h2>
+                        <button class="modal-close" id="close-summary-modal">&times;</button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="summary-content" id="summary-content">
+                            <!-- Summary will be populated -->
+                        </div>
+                        <div class="summary-actions">
+                            <button class="btn btn-primary" id="download-pdf">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                                    <polyline points="14 2 14 8 20 8"/>
+                                    <line x1="16" y1="13" x2="8" y2="13"/>
+                                    <line x1="16" y1="17" x2="8" y2="17"/>
+                                    <polyline points="10 9 9 9 8 9"/>
+                                </svg>
+                                Download PDF Report
+                            </button>
+                            <button class="btn btn-secondary" id="download-json">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                                    <polyline points="7 10 12 15 17 10"/>
+                                    <line x1="12" y1="15" x2="12" y2="3"/>
+                                </svg>
+                                Download JSON
+                            </button>
+                            <button class="btn btn-secondary" id="download-html">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                                    <polyline points="14 2 14 8 20 8"/>
+                                </svg>
+                                Download HTML
+                            </button>
+                            <button class="btn btn-secondary" id="download-stix">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+                                    <path d="M2 17l10 5 10-5"/>
+                                    <path d="M2 12l10 5 10-5"/>
+                                </svg>
+                                Download STIX
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Step Detail Modal -->
+            <div class="modal" id="step-modal">
+                <div class="modal-content modal-large">
+                    <div class="modal-header">
+                        <h2>Step Details</h2>
+                        <button class="modal-close" id="close-step-modal">&times;</button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="step-detail-content" id="step-detail-content">
+                            <!-- Step details will be populated -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- MITRE Technique Detail Modal -->
+            <div class="modal" id="mitre-modal">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h2 id="mitre-modal-title">Technique Details</h2>
+                        <button class="modal-close" id="close-mitre-modal">&times;</button>
+                    </div>
+                    <div class="modal-body" id="mitre-modal-content">
+                        <!-- Technique details will be populated -->
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <script src="dashboard.js"></script>
+    </body>
+</html>
