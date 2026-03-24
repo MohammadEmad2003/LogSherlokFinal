@@ -14,6 +14,7 @@ This comprehensive guide documents all environment variables available in CAI, i
 | CTF_IP | IP address for the CTF container | 192.168.3.100 |
 | CTF_INSIDE | Whether to conquer the CTF from within container | true |
 | CAI_MODEL | Model to use for agents | alias1 |
+| CAI_OPENAI_BASE_URL | OpenAI-compatible endpoint base URL. Accepts either a base URL (e.g. https://host/v1) or a full chat completions endpoint (e.g. https://host/v1/chat/completions) | - |
 | CAI_DEBUG | Set debug output level (0: Only tool outputs, 1: Verbose debug output, 2: CLI debug output) | 1 |
 | CAI_BRIEF | Enable/disable brief output mode | false |
 | CAI_MAX_TURNS | Maximum number of turns for agent interactions | inf |
@@ -332,6 +333,10 @@ CAI does NOT provide API keys for any model by default. Configure your own keys 
 
 ```bash
 OPENAI_API_KEY="sk-..."              # Required (can use "sk-123" as placeholder)
+<<<<<<< HEAD
+=======
+CAI_OPENAI_BASE_URL="https://your-host/v1/chat/completions"  # OpenAI-compatible endpoint
+>>>>>>> 86f2713a648ddd514026570342b4fce074bfc153
 ANTHROPIC_API_KEY="sk-ant-..."       # For Claude models
 ALIAS_API_KEY="sk-..."               # For alias1 (CAI PRO)
 OLLAMA_API_BASE="http://localhost:11434/v1"  # For local models

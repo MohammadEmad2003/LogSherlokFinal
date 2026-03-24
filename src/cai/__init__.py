@@ -2,6 +2,56 @@
 A library to build Bug Bounty-level grade Cybersecurity AIs (CAIs).
 """
 
+import os
+
+
+def _normalize_openai_base_url(url: str) -> str:
+    """Normalize OpenAI-compatible endpoint URLs to a client base URL.
+
+    Accepts either:
+    - https://host/v1
+    - https://host/v1/chat/completions
+    """
+    normalized = url.strip().rstrip("/")
+    suffix = "/chat/completions"
+    if normalized.endswith(suffix):
+        normalized = normalized[: -len(suffix)]
+    return normalized
+
+
+def _apply_cai_openai_base_url() -> None:
+    """Resolve OpenAI-compatible base URL aliases into OPENAI_BASE_URL.
+
+    Precedence:
+    1) OPENAI_BASE_URL
+    2) CAI_OPENAI_BASE_URL
+    3) API_BASE
+    """
+    selected_base_url = (
+        os.getenv("OPENAI_BASE_URL")
+        or os.getenv("CAI_OPENAI_BASE_URL")
+        or os.getenv("API_BASE")
+    )
+    if selected_base_url:
+        os.environ["OPENAI_BASE_URL"] = _normalize_openai_base_url(selected_base_url)
+
+
+def _apply_openai_api_key_aliases() -> None:
+    """Resolve API key aliases into OPENAI_API_KEY.
+
+    If OPENAI_API_KEY is not set, fallback to API_KEY for OpenAI-compatible
+    providers and proxies.
+    """
+    if not os.getenv("OPENAI_API_KEY"):
+        api_key = os.getenv("API_KEY")
+        if api_key:
+            os.environ["OPENAI_API_KEY"] = api_key
+
+
+_apply_cai_openai_base_url()
+_apply_openai_api_key_aliases()
+
+
 def is_pentestperf_available():
     """
     Check if pentestperf is available

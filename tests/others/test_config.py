@@ -5,6 +5,7 @@ import pytest
 
 from cai.sdk.agents import set_default_openai_api, set_default_openai_client, set_default_openai_key
 from cai.sdk.agents.models.openai_chatcompletions import OpenAIChatCompletionsModel
+from cai.sdk.agents.models import openai_provider as openai_provider_module
 from cai.sdk.agents.models.openai_provider import OpenAIProvider
 from cai.sdk.agents.models.openai_responses import OpenAIResponsesModel
 
@@ -65,3 +66,27 @@ def test_set_default_openai_api():
     assert isinstance(OpenAIProvider().get_model(cai_model), OpenAIResponsesModel), (
         "Should be responses model"
     )
+
+
+def test_cai_openai_base_url_applies_when_base_url_not_passed(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "test_key")
+    monkeypatch.setenv(
+        "CAI_OPENAI_BASE_URL",
+        "https://e0f1-196-157-78-53.ngrok-free.app/v1/chat/completions",
+    )
+    monkeypatch.setattr(openai_provider_module._openai_shared, "get_default_openai_client", lambda: None)
+
+    model = OpenAIProvider(use_responses=False).get_model(cai_model)
+    assert str(model._client.base_url) == "https://e0f1-196-157-78-53.ngrok-free.app/v1/"  # type: ignore
+
+
+def test_explicit_base_url_takes_precedence_over_cai_openai_base_url(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "test_key")
+    monkeypatch.setenv("CAI_OPENAI_BASE_URL", "https://example.com/v1")
+    monkeypatch.setattr(openai_provider_module._openai_shared, "get_default_openai_client", lambda: None)
+
+    model = OpenAIProvider(
+        base_url="https://override.example/v1",
+        use_responses=False,
+    ).get_model(cai_model)
+    assert str(model._client.base_url) == "https://override.example/v1/"  # type: ignore

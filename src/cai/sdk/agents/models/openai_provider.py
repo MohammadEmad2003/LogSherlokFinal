@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 import httpx
 from openai import AsyncOpenAI, DefaultAsyncHttpxClient
 
@@ -12,6 +14,21 @@ DEFAULT_MODEL: str = "gpt-4o"
 
 
 _http_client: httpx.AsyncClient | None = None
+
+
+def _resolve_base_url(base_url: str | None) -> str | None:
+    if base_url:
+        return base_url
+
+    cai_base_url = os.getenv("CAI_OPENAI_BASE_URL")
+    if not cai_base_url:
+        return None
+
+    normalized = cai_base_url.strip().rstrip("/")
+    suffix = "/chat/completions"
+    if normalized.endswith(suffix):
+        normalized = normalized[: -len(suffix)]
+    return normalized
 
 
 # If we create a new httpx client for each request, that would mean no sharing of connection pools,
@@ -55,7 +72,7 @@ class OpenAIProvider(ModelProvider):
         else:
             self._client = None
             self._stored_api_key = api_key
-            self._stored_base_url = base_url
+            self._stored_base_url = _resolve_base_url(base_url)
             self._stored_organization = organization
             self._stored_project = project
 

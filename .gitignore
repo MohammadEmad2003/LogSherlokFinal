@@ -36,6 +36,8 @@ share/python-wheels/
 *.egg
 MANIFEST
 .devcontainer/qdrant_storage/
+
+Test_Scenario/
 # PyInstaller
 *.manifest
 *.spec
@@ -173,3 +175,9 @@ data/
 
 # ignore dev files
 cai-*
+Test Scenario/Challenge.tar.xz
+Test Scenario/Challenge.raw
+*.raw
+*.mem
+*.dmp
+*.img
