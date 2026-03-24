@@ -9,10 +9,6 @@ import hashlib
 from cai.tools.common import run_command
 from cai.sdk.agents import function_tool
 
-
-# ---------------------------------------------------------------------------
-# python-magic: File type detection via magic bytes
-# ---------------------------------------------------------------------------
 @function_tool
 def identify_file_type(file_path: str, ctf=None) -> str:
     """
@@ -174,9 +170,7 @@ def extract_exif_metadata(file_path: str, ctf=None) -> str:
         return json.dumps({"error": str(e)})
 
 
-# ---------------------------------------------------------------------------
-# pefile: Windows PE analysis
-# ---------------------------------------------------------------------------
+
 @function_tool
 def analyze_pe(file_path: str, ctf=None) -> str:
     """
