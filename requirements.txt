@@ -1,0 +1,44 @@
+# Autonomous Forensic Agent - Requirements
+# Python 3.9+
+
+# Web Framework
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
+python-multipart==0.0.6
+websockets==12.0
+
+# Pydantic v2
+pydantic==2.5.3
+pydantic-settings==2.1.0
+email-validator==2.1.0
+
+# Database
+sqlalchemy==2.0.25
+psycopg2-binary==2.9.9
+
+# Authentication
+PyJWT==2.8.0
+passlib[bcrypt]==1.7.4
+bcrypt==4.1.2
+
+# HTTP Client
+aiohttp==3.9.1
+httpx==0.26.0
+
+# Data Processing
+python-dateutil==2.8.2
+
+# Logging
+python-json-logger==2.0.7
+
+# Optional: Forensic Tools (if running analysis locally)
+# Note: These tools should be installed separately via system package manager
+# volatility3
+# sleuthkit
+# yara-python==4.5.0
+# pefile==2023.2.7
+
+# Development
+pytest==7.4.4
+pytest-asyncio==0.23.3
+black==24.1.0

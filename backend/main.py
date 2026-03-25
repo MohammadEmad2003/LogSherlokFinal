@@ -8,9 +8,10 @@ import os
 import sys
 import uuid
 import logging
+import json
 from pathlib import Path
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Dict, Any, List
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -18,20 +19,55 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, JSONResponse, HTMLResponse
+from fastapi.responses import FileResponse, JSONResponse, HTMLResponse, Response
 from pydantic import BaseModel
 
-# Import services using relative imports when run as module, absolute when run directly
+# Import services - only session and websocket managers (no mock agent)
 try:
     from backend.services.session_manager import SessionManager, session_manager
     from backend.services.websocket_manager import WebSocketManager, ws_manager
-    from backend.services.mock_agent import MockForensicAgent
     from backend.services.report_generator import ReportGenerator
 except ImportError:
     from services.session_manager import SessionManager, session_manager
     from services.websocket_manager import WebSocketManager, ws_manager
-    from services.mock_agent import MockForensicAgent
     from services.report_generator import ReportGenerator
+
+# Import database and authentication
+try:
+    from backend.database import get_db, init_db, User, Investigation, ChatMessage as DBChatMessage
+    from backend.auth import (
+        UserCreate, UserLogin, TokenResponse, ForgotPasswordRequest,
+        ResetPasswordRequest, RefreshTokenRequest, get_current_user,
+        create_user, authenticate_user, create_tokens_for_user,
+        create_password_reset_otp, verify_otp_and_reset_password,
+        refresh_access_token, logout_user, get_optional_user
+    )
+    from backend.email_service import email_service
+except ImportError:
+    from database import get_db, init_db, User, Investigation, ChatMessage as DBChatMessage
+    from auth import (
+        UserCreate, UserLogin, TokenResponse, ForgotPasswordRequest,
+        ResetPasswordRequest, RefreshTokenRequest, get_current_user,
+        create_user, authenticate_user, create_tokens_for_user,
+        create_password_reset_otp, verify_otp_and_reset_password,
+        refresh_access_token, logout_user, get_optional_user
+    )
+    from email_service import email_service
+
+from sqlalchemy.orm import Session
+from fastapi import Depends, Request
+
+# Import autonomous agent components
+try:
+    from backend.orchestrator import ForensicOrchestrator
+    from backend.utils import LLMClient, LLMRequest
+    from backend.schemas import UploadArtifactRequest, ChatRequest as AgentChatRequest
+    from backend.tools import ALLOWED_TOOLS
+except ImportError:
+    from orchestrator import ForensicOrchestrator
+    from utils import LLMClient, LLMRequest
+    from schemas import UploadArtifactRequest, ChatRequest as AgentChatRequest
+    from tools import ALLOWED_TOOLS
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -41,7 +77,7 @@ logger = logging.getLogger(__name__)
 app = FastAPI(
     title="Autonomous Forensic Orchestrator",
     description="AI-powered DFIR analysis pipeline with real-time investigation tracking",
-    version="1.0.0",
+    version="2.0.0",
 )
 
 # CORS middleware - allow all origins for development
@@ -67,6 +103,33 @@ REPORTS_DIR.mkdir(exist_ok=True)
 logger.info(f"Backend directory: {BACKEND_DIR}")
 logger.info(f"UI directory: {UI_DIR}")
 logger.info(f"Upload directory: {UPLOAD_DIR}")
+
+# ============================================================================
+# Initialize Autonomous Agent Components
+# ============================================================================
+
+# Initialize LLM Client with ngrok endpoint
+LLM_BASE_URL = os.getenv("LLM_BASE_URL", "https://5d0d-196-157-106-114.ngrok-free.app/v1")
+LLM_API_KEY = os.getenv("LLM_API_KEY", "dummy")
+LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4")
+
+logger.info(f"Initializing LLM Client with base URL: {LLM_BASE_URL}")
+llm_client = LLMClient(base_url=LLM_BASE_URL, api_key=LLM_API_KEY, model=LLM_MODEL)
+
+# Global orchestrator instance
+orchestrator: Optional[ForensicOrchestrator] = None
+
+
+def get_orchestrator() -> ForensicOrchestrator:
+    """Get or create orchestrator instance"""
+    global orchestrator
+    if orchestrator is None:
+        orchestrator = ForensicOrchestrator(
+            llm_client=llm_client,
+            websocket_callback=None,
+            max_steps=50
+        )
+    return orchestrator
 
 
 # ============================================================================
@@ -102,22 +165,222 @@ class SessionStatus(BaseModel):
 
 
 # ============================================================================
+# Authentication Endpoints
+# ============================================================================
+
+@app.post("/auth/register", tags=["Authentication"])
+async def register(
+    user_data: UserCreate,
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db)
+):
+    """Register a new user account."""
+    user = create_user(db, user_data)
+
+    # Send welcome email
+    email_service.send_welcome_email(user.email, user.username)
+
+    # Create tokens
+    token_data = create_tokens_for_user(
+        db, user,
+        device_info=request.headers.get("User-Agent"),
+        ip_address=request.client.host if request.client else None
+    )
+
+    # Set HTTP-only cookies
+    response.set_cookie(
+        key="access_token",
+        value=token_data.access_token,
+        httponly=True,
+        secure=False,  # Set to True in production with HTTPS
+        samesite="lax",
+        max_age=token_data.expires_in
+    )
+    response.set_cookie(
+        key="refresh_token",
+        value=token_data.refresh_token,
+        httponly=True,
+        secure=False,
+        samesite="lax",
+        max_age=7 * 24 * 60 * 60  # 7 days
+    )
+
+    return {"user": token_data.user, "message": "Registration successful"}
+
+
+@app.post("/auth/login", tags=["Authentication"])
+async def login(
+    credentials: UserLogin,
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db)
+):
+    """Login with email and password."""
+    user = authenticate_user(db, credentials.email, credentials.password)
+    if not user:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid email or password"
+        )
+
+    token_data = create_tokens_for_user(
+        db, user,
+        device_info=request.headers.get("User-Agent"),
+        ip_address=request.client.host if request.client else None
+    )
+
+    # Set HTTP-only cookies
+    response.set_cookie(
+        key="access_token",
+        value=token_data.access_token,
+        httponly=True,
+        secure=False,
+        samesite="lax",
+        max_age=token_data.expires_in
+    )
+    response.set_cookie(
+        key="refresh_token",
+        value=token_data.refresh_token,
+        httponly=True,
+        secure=False,
+        samesite="lax",
+        max_age=7 * 24 * 60 * 60
+    )
+
+    return {"user": token_data.user, "message": "Login successful"}
+
+
+@app.post("/auth/forgot-password", tags=["Authentication"])
+async def forgot_password(
+    request_data: ForgotPasswordRequest,
+    db: Session = Depends(get_db)
+):
+    """Request a password reset OTP."""
+    otp = create_password_reset_otp(db, request_data.email)
+
+    if otp:
+        # Send OTP email
+        email_service.send_otp_email(request_data.email, otp, "password reset")
+        logger.info(f"Password reset OTP sent to {request_data.email}")
+
+    # Always return success to prevent email enumeration
+    return {
+        "message": "If an account exists with this email, you will receive a password reset code.",
+        "email": request_data.email
+    }
+
+
+@app.post("/auth/reset-password", tags=["Authentication"])
+async def reset_password(
+    request_data: ResetPasswordRequest,
+    db: Session = Depends(get_db)
+):
+    """Reset password using OTP."""
+    verify_otp_and_reset_password(
+        db,
+        request_data.email,
+        request_data.otp,
+        request_data.new_password
+    )
+
+    return {"message": "Password reset successfully. Please login with your new password."}
+
+
+@app.post("/auth/refresh", response_model=TokenResponse, tags=["Authentication"])
+async def refresh_token(
+    request_data: RefreshTokenRequest,
+    db: Session = Depends(get_db)
+):
+    """Refresh access token using refresh token."""
+    return refresh_access_token(db, request_data.refresh_token)
+
+
+@app.post("/auth/logout", tags=["Authentication"])
+async def logout(
+    response: Response,
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """Logout current user (revoke tokens and clear cookies)."""
+    # Get token from cookie
+    token = request.cookies.get("access_token")
+
+    if token:
+        try:
+            from backend.auth import decode_token
+            payload = decode_token(token)
+            user_id = payload.get("sub")
+
+            if user_id:
+                user = db.query(User).filter(User.id == user_id).first()
+                if user:
+                    logout_user(db, user)
+        except:
+            pass
+
+    # Clear cookies
+    response.delete_cookie("access_token")
+    response.delete_cookie("refresh_token")
+
+    return {"message": "Logged out successfully"}
+
+
+@app.get("/auth/me", tags=["Authentication"])
+async def get_me(request: Request, db: Session = Depends(get_db)):
+    """Get current user profile from cookie."""
+    token = request.cookies.get("access_token")
+
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    try:
+        from backend.auth import decode_token
+        payload = decode_token(token)
+        user_id = payload.get("sub")
+
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Invalid token")
+
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user or not user.is_active:
+            raise HTTPException(status_code=401, detail="User not found or inactive")
+
+        return user.to_dict()
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Auth error: {e}")
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+
+# ============================================================================
 # Static Files - Serve UI
 # ============================================================================
 
-# Mount UI static files (CSS, JS)
+# Serve static files (CSS, JS)
 if UI_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(UI_DIR)), name="static")
     logger.info(f"Mounted UI static files from {UI_DIR}")
 
 
+# Serve HTML pages
 @app.get("/", response_class=HTMLResponse)
 async def serve_index():
     """Serve the main landing page."""
     index_path = UI_DIR / "index.html"
     if index_path.exists():
         return FileResponse(str(index_path), media_type="text/html")
-    return HTMLResponse("<h1>Autonomous Forensic Orchestrator API</h1><p>UI not found. Go to <a href='/docs'>/docs</a></p>")
+    return HTMLResponse("<h1>LogSherlock</h1><p>UI not found. Go to <a href='/docs'>/docs</a></p>")
+
+
+@app.get("/auth.html", response_class=HTMLResponse)
+async def serve_auth():
+    """Serve the authentication page."""
+    auth_path = UI_DIR / "auth.html"
+    if auth_path.exists():
+        return FileResponse(str(auth_path), media_type="text/html")
+    raise HTTPException(status_code=404, detail="Auth page not found")
 
 
 @app.get("/dashboard", response_class=HTMLResponse)
@@ -132,14 +395,12 @@ async def serve_dashboard():
 
 @app.get("/index.html", response_class=HTMLResponse)
 async def serve_index_html():
-    """Serve the main landing page (explicit path)."""
     return await serve_index()
 
 
-# Serve CSS and JS files directly
+# Serve individual static files
 @app.get("/styles.css")
 async def serve_styles():
-    """Serve CSS file."""
     css_path = UI_DIR / "styles.css"
     if css_path.exists():
         return FileResponse(str(css_path), media_type="text/css")
@@ -148,16 +409,22 @@ async def serve_styles():
 
 @app.get("/app.js")
 async def serve_app_js():
-    """Serve app.js file."""
     js_path = UI_DIR / "app.js"
     if js_path.exists():
         return FileResponse(str(js_path), media_type="application/javascript")
     raise HTTPException(status_code=404, detail="app.js not found")
 
 
+@app.get("/auth.js")
+async def serve_auth_js():
+    js_path = UI_DIR / "auth.js"
+    if js_path.exists():
+        return FileResponse(str(js_path), media_type="application/javascript")
+    raise HTTPException(status_code=404, detail="auth.js not found")
+
+
 @app.get("/dashboard.js")
 async def serve_dashboard_js():
-    """Serve dashboard.js file."""
     js_path = UI_DIR / "dashboard.js"
     if js_path.exists():
         return FileResponse(str(js_path), media_type="application/javascript")
@@ -174,37 +441,65 @@ async def upload_artefact(
     artifact_type: str = Form(default="auto"),
     description: str = Form(default=""),
 ):
-    """
-    Upload a forensic artifact to start investigation.
+    """Upload a forensic artifact to start autonomous investigation."""
+    import shutil as _shutil
 
-    Supported types:
-    - memory_dump: RAM dump files (.raw, .mem, .dmp)
-    - disk_image: Disk images (.img, .dd, .E01)
-    - evtx: Windows Event Logs (.evtx)
-    - pcap: Network captures (.pcap, .pcapng)
-    - malware_sample: Suspicious executables
-    - auto: Auto-detect based on extension
-    """
+    session_id = str(uuid.uuid4())[:8]
+    file_ext = Path(file.filename).suffix.lower() if file.filename else ".bin"
+    saved_filename = f"{session_id}_{file.filename}"
+    file_path = UPLOAD_DIR / saved_filename
+
     try:
-        # Generate session ID
-        session_id = str(uuid.uuid4())[:8]
+        # Check available disk space before reading (require at least 512 MB free)
+        disk = _shutil.disk_usage(UPLOAD_DIR)
+        MIN_FREE_BYTES = 512 * 1024 * 1024  # 512 MB safety margin
+        if disk.free < MIN_FREE_BYTES:
+            free_gb = disk.free / (1024 ** 3)
+            raise HTTPException(
+                status_code=507,
+                detail=f"Insufficient disk space on server. Only {free_gb:.2f} GB free. "
+                       f"Please free up space and try again."
+            )
 
-        # Save uploaded file
-        file_ext = Path(file.filename).suffix.lower() if file.filename else ".bin"
-        saved_filename = f"{session_id}_{file.filename}"
-        file_path = UPLOAD_DIR / saved_filename
+        # Stream-write the file in chunks to avoid loading it all into RAM
+        CHUNK = 1024 * 1024  # 1 MB chunks
+        file_size = 0
+        header_bytes = b""
 
-        content = await file.read()
-        file_size = len(content)
+        try:
+            with open(file_path, "wb") as f:
+                while True:
+                    chunk = await file.read(CHUNK)
+                    if not chunk:
+                        break
+                    # Check space before each chunk write
+                    remaining = _shutil.disk_usage(UPLOAD_DIR).free
+                    if remaining < len(chunk) + MIN_FREE_BYTES:
+                        raise OSError(28, "No space left on device")
+                    f.write(chunk)
+                    if file_size == 0:
+                        header_bytes = chunk[:1024]
+                    file_size += len(chunk)
+        except OSError as e:
+            # Clean up partial file
+            if file_path.exists():
+                file_path.unlink(missing_ok=True)
+            if e.errno == 28:
+                raise HTTPException(
+                    status_code=507,
+                    detail="Server ran out of disk space while saving the file. "
+                           "Please ask the administrator to free up disk space."
+                )
+            raise HTTPException(status_code=500, detail=f"File write error: {e.strerror}")
 
-        with open(file_path, "wb") as f:
-            f.write(content)
+        if file_size == 0:
+            if file_path.exists():
+                file_path.unlink(missing_ok=True)
+            raise HTTPException(status_code=400, detail="Uploaded file is empty.")
 
-        # Auto-detect artifact type
         if artifact_type == "auto":
-            artifact_type = _detect_artifact_type(file_ext, content[:1024])
+            artifact_type = _detect_artifact_type(file_ext, header_bytes)
 
-        # Create session
         session_manager.create_session(
             session_id=session_id,
             artifact_path=str(file_path),
@@ -214,62 +509,82 @@ async def upload_artefact(
             description=description,
         )
 
-        logger.info(f"Created session {session_id} for artifact: {file.filename}")
+        logger.info(f"Created session {session_id} for artifact: {file.filename} ({file_size:,} bytes)")
 
         return UploadResponse(
             session_id=session_id,
             status="started",
-            message=f"Investigation started for {artifact_type} artifact",
+            message=f"Investigation initialized for {artifact_type} artifact.",
             artifact_name=file.filename or "unknown",
             artifact_size=file_size,
         )
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception("Failed to upload artifact")
-        raise HTTPException(status_code=500, detail=str(e))
+        # Clean up any partial file
+        if file_path.exists():
+            file_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
 
 
 @app.post("/chat", response_model=ChatResponse)
 async def chat(message: ChatMessage):
-    """
-    Send a message/instruction to the forensic agent.
-
-    Example instructions:
-    - "Focus on network connections"
-    - "Look for persistence mechanisms"
-    - "Check for credential theft"
-    """
+    """Send a message to the forensic agent - uses REAL LLM."""
     session = session_manager.get_session(message.session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    # Add instruction to session
-    session_manager.add_instruction(message.session_id, message.message)
+    # Get orchestrator state for context
+    orch = get_orchestrator()
+    state = orch.get_state(message.session_id)
 
-    # Broadcast instruction to WebSocket
+    # Build context from real investigation state
+    context = _build_chat_context(state, session)
+
+    # Process query with real LLM
+    response = await process_agent_query(message.message, context)
+
+    # Also broadcast to WebSocket
     await ws_manager.broadcast(message.session_id, {
-        "type": "instruction",
+        "type": "chat_response",
         "timestamp": datetime.utcnow().isoformat(),
-        "message": message.message,
+        "query": message.message,
+        "response": response,
     })
 
     return ChatResponse(
         session_id=message.session_id,
-        response=f"Instruction received: {message.message}. Agent will incorporate this guidance.",
-        status="acknowledged",
+        response=response,
+        status="completed",
     )
 
 
 @app.get("/status/{session_id}", response_model=SessionStatus)
 async def get_status(session_id: str):
-    """Get the current status of an investigation."""
+    """Get the current status of an investigation - from REAL state."""
+    orch = get_orchestrator()
+    state = orch.get_state(session_id)
+
+    if state:
+        return SessionStatus(
+            session_id=session_id,
+            status=state.status,
+            current_phase=state.current_phase,
+            steps_completed=len(state.steps),
+            total_evidence=len(state.evidence),
+            progress_percent=min((len(state.steps) / 50.0) * 100, 100),
+        )
+
+    # Fallback to session manager
     session = session_manager.get_session(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
 
     return SessionStatus(
         session_id=session_id,
-        status=session.get("status", "unknown"),
+        status=session.get("status", "initializing"),
         current_phase=session.get("current_phase", "initializing"),
         steps_completed=len(session.get("steps", [])),
         total_evidence=len(session.get("evidence", [])),
@@ -279,25 +594,24 @@ async def get_status(session_id: str):
 
 @app.get("/report/{session_id}")
 async def get_report(session_id: str, format: str = "json"):
-    """
-    Get the final investigation report.
+    """Get the investigation report - from REAL state."""
+    orch = get_orchestrator()
+    state = orch.get_state(session_id)
 
-    Formats:
-    - json: JSON report with all findings
-    - html: Rendered HTML report
-    - stix: STIX 2.1 bundle
-    """
+    if state:
+        report = _generate_real_report(state, format)
+        return JSONResponse(report)
+
+    # Fallback
     session = session_manager.get_session(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
 
     generator = ReportGenerator(session)
-
     if format == "json":
         return JSONResponse(generator.generate_json_report())
     elif format == "html":
-        html_content = generator.generate_html_report()
-        return JSONResponse({"html": html_content})
+        return JSONResponse({"html": generator.generate_html_report()})
     elif format == "stix":
         return JSONResponse(generator.generate_stix_bundle())
     else:
@@ -306,8 +620,28 @@ async def get_report(session_id: str, format: str = "json"):
 
 @app.get("/sessions")
 async def list_sessions():
-    """List all active investigation sessions."""
-    return session_manager.list_sessions()
+    """List all investigation sessions from both session_manager and orchestrator."""
+    # Start with sessions from session_manager (created on upload)
+    all_sessions: Dict[str, Any] = {}
+    for session_id, session in session_manager._sessions.items():
+        all_sessions[session_id] = {
+            "session_id": session_id,
+            "artifact_name": session.artifact_name,
+            "artifact_type": session.artifact_type,
+            "status": session.status,
+            "steps_count": len(session.steps),
+            "evidence_count": len(session.evidence),
+            "started_at": session.created_at,
+            "current_phase": session.current_phase,
+        }
+
+    # Override/enrich with orchestrator state if available (more up-to-date)
+    orch = get_orchestrator()
+    for s in orch.list_sessions():
+        sid = s["session_id"]
+        all_sessions[sid] = s
+
+    return list(all_sessions.values())
 
 
 @app.delete("/session/{session_id}")
@@ -320,207 +654,439 @@ async def delete_session(session_id: str):
 
 @app.get("/tools")
 async def list_tools():
-    """List all available forensic tools."""
+    """List all available forensic tools as structured objects."""
+    tool_catalog = [
+        # Memory Forensics
+        {"name": "volatility", "description": "Memory forensics framework for analyzing RAM dumps and process memory", "category": "memory_forensics"},
+        {"name": "vol3", "description": "Volatility 3 - modern, plugin-based memory forensics framework", "category": "memory_forensics"},
+        {"name": "vol.py", "description": "Volatility 2 legacy interface for Windows/Linux memory analysis", "category": "memory_forensics"},
+        {"name": "rekall", "description": "Advanced memory forensics framework with live memory support", "category": "memory_forensics"},
+        # Disk Forensics
+        {"name": "mmls", "description": "Display partition layout of volume system (Sleuth Kit)", "category": "disk_forensics"},
+        {"name": "fls", "description": "List files and directories in a disk image (Sleuth Kit)", "category": "disk_forensics"},
+        {"name": "icat", "description": "Output contents of a file based on inode (Sleuth Kit)", "category": "disk_forensics"},
+        {"name": "fsstat", "description": "Display file system details and statistics (Sleuth Kit)", "category": "disk_forensics"},
+        {"name": "binwalk", "description": "Firmware analysis and embedded file extraction tool", "category": "disk_forensics"},
+        {"name": "foremost", "description": "File carving tool for recovering deleted files from disk images", "category": "disk_forensics"},
+        {"name": "bulk_extractor", "description": "High-performance digital forensics scanner for feature extraction", "category": "disk_forensics"},
+        # Malware Analysis
+        {"name": "yara", "description": "Pattern matching tool for malware identification and classification", "category": "malware_analysis"},
+        {"name": "clamscan", "description": "ClamAV antivirus scanner for malware signature detection", "category": "malware_analysis"},
+        {"name": "peframe", "description": "Static analysis tool for PE (Portable Executable) malware samples", "category": "malware_analysis"},
+        {"name": "objdump", "description": "Display information from object/binary files (disassembly, headers)", "category": "malware_analysis"},
+        {"name": "readelf", "description": "Display information about ELF format executable files", "category": "malware_analysis"},
+        {"name": "exiftool", "description": "Read, write and edit metadata in files (EXIF, IPTC, XMP)", "category": "malware_analysis"},
+        # Network Forensics
+        {"name": "tshark", "description": "Terminal-based network protocol analyzer (Wireshark CLI)", "category": "network_forensics"},
+        {"name": "tcpdump", "description": "Packet analyzer for capturing and analyzing network traffic", "category": "network_forensics"},
+        {"name": "zeek", "description": "Network security monitor and traffic analyzer", "category": "network_forensics"},
+        {"name": "suricata", "description": "High-performance network IDS, IPS and security monitoring engine", "category": "network_forensics"},
+        {"name": "tcpflow", "description": "TCP/IP packet demultiplexer for reconstructing data streams", "category": "network_forensics"},
+        # Log Analysis
+        {"name": "chainsaw", "description": "Rapidly search and hunt through Windows Event Logs using Sigma rules", "category": "log_analysis"},
+        {"name": "hayabusa", "description": "Windows event log fast forensics timeline generator", "category": "log_analysis"},
+        {"name": "evtxdump", "description": "Parse and convert Windows EVTX event log files to JSON/XML", "category": "log_analysis"},
+        {"name": "journalctl", "description": "Query and display messages from the systemd journal", "category": "log_analysis"},
+        {"name": "ausearch", "description": "Search Linux audit daemon log files for events", "category": "log_analysis"},
+        # Threat Intelligence
+        {"name": "mitre_attack", "description": "MITRE ATT&CK framework technique lookup and mapping", "category": "threat_intelligence"},
+        {"name": "threat_intel", "description": "Integrated threat intelligence lookup across multiple feeds", "category": "threat_intelligence"},
+        {"name": "ioc_lookup", "description": "Indicator of Compromise lookup across threat intelligence platforms", "category": "threat_intelligence"},
+        {"name": "virustotal", "description": "VirusTotal API for file/URL/hash reputation scanning", "category": "threat_intelligence"},
+        {"name": "otx", "description": "AlienVault OTX (Open Threat Exchange) threat intelligence lookup", "category": "threat_intelligence"},
+        {"name": "misp", "description": "MISP threat intelligence platform integration for IOC sharing", "category": "threat_intelligence"},
+        # General Tools
+        {"name": "strings", "description": "Extract printable strings from binary files for analysis", "category": "general"},
+        {"name": "file", "description": "Determine file type using magic bytes and heuristics", "category": "general"},
+        {"name": "xxd", "description": "Create hex dump of a file for binary analysis", "category": "general"},
+        {"name": "hexdump", "description": "Display file contents in hexadecimal and ASCII format", "category": "general"},
+        {"name": "md5sum", "description": "Compute and verify MD5 message digest checksums", "category": "general"},
+        {"name": "sha256sum", "description": "Compute and verify SHA-256 cryptographic hash values", "category": "general"},
+        {"name": "grep", "description": "Search files for patterns using regular expressions", "category": "general"},
+        {"name": "python3", "description": "Python 3 interpreter for custom forensic scripts and analysis", "category": "general"},
+    ]
+
     return {
-        "tools": MockForensicAgent.get_available_tools(),
-        "total": len(MockForensicAgent.get_available_tools()),
+        "tools": tool_catalog,
+        "total": len(tool_catalog),
+    }
+
+
+@app.get("/agent/state/{session_id}")
+async def get_agent_state(session_id: str):
+    """Get full agent state for debugging."""
+    orch = get_orchestrator()
+    state = orch.get_state(session_id)
+
+    if not state:
+        raise HTTPException(status_code=404, detail="No agent state found")
+
+    return {
+        "session_id": session_id,
+        "status": state.status,
+        "current_phase": state.current_phase,
+        "steps": [
+            {
+                "step_number": s.step_number,
+                "phase": s.phase,
+                "reasoning": s.reasoning,
+                "action": s.action,
+                "evidence_count": len(s.evidence_found),
+                "confidence": s.confidence
+            }
+            for s in state.steps
+        ],
+        "evidence": [
+            {
+                "type": e.type,
+                "value": e.value,
+                "confidence": e.confidence,
+                "threat_score": e.threat_score,
+                "source": e.source,
+                "mitre_tactics": e.mitre_tactics,
+                "mitre_techniques": e.mitre_techniques
+            }
+            for e in state.evidence
+        ],
+        "hypotheses": [
+            {
+                "hypothesis": h.hypothesis,
+                "confidence": h.confidence,
+                "severity": h.severity,
+                "mitre_tactics": h.mitre_tactics
+            }
+            for h in state.hypotheses
+        ],
+        "mitre_coverage": {
+            "tactics": state.mitre_coverage.tactics,
+            "techniques": dict(state.mitre_coverage.techniques),
+            "total_tactics": state.mitre_coverage.total_tactics,
+            "total_techniques": state.mitre_coverage.total_techniques
+        },
+        "todos": [
+            {
+                "id": t.id,
+                "task": t.task,
+                "priority": t.priority,
+                "status": t.status
+            }
+            for t in state.todos
+        ],
+        "threat_score": state.threat_score,
+        "overall_confidence": state.overall_confidence
     }
 
 
 # ============================================================================
-# LLM Query Processing
+# Real LLM-Powered Chat Query Processing
 # ============================================================================
 
-async def process_llm_query(query: str, context: dict, session: dict) -> str:
-    """
-    Process natural language queries about the investigation.
-    In production, this would call an actual LLM API (OpenAI, Anthropic, etc.)
-    For demo, we simulate intelligent responses based on investigation data.
-    """
-    query_lower = query.lower()
+def _build_chat_context(state, session: dict) -> Dict[str, Any]:
+    """Build context from real investigation state for chat."""
+    context = {
+        "artifact_name": session.get("artifact_name", "unknown"),
+        "artifact_type": session.get("artifact_type", "unknown"),
+        "evidence": [],
+        "steps": [],
+        "hypotheses": [],
+        "mitre": {"tactics": {}, "techniques": {}},
+        "todos": []
+    }
 
-    # Extract context
-    evidence_list = context.get("evidence", []) or session.get("evidence", [])
-    steps_list = context.get("steps", []) or session.get("steps", [])
-    mitre_data = context.get("mitre", {}) or session.get("mitre_coverage", {})
-    hypotheses_list = context.get("hypotheses", []) or session.get("hypotheses", [])
+    if state:
+        context["evidence"] = [
+            {
+                "type": e.type,
+                "value": e.value,
+                "confidence": e.confidence,
+                "threat_score": e.threat_score,
+                "source": e.source,
+                "mitre_tactics": e.mitre_tactics,
+                "mitre_techniques": e.mitre_techniques
+            }
+            for e in state.evidence
+        ]
+        context["steps"] = [
+            {
+                "step_number": s.step_number,
+                "reasoning": s.reasoning,
+                "action": s.action,
+                "observation": s.observation
+            }
+            for s in state.steps
+        ]
+        context["hypotheses"] = [
+            {
+                "hypothesis": h.hypothesis,
+                "confidence": h.confidence,
+                "severity": h.severity,
+                "supporting_evidence": h.supporting_evidence
+            }
+            for h in state.hypotheses
+        ]
+        context["mitre"] = {
+            "tactics": state.mitre_coverage.tactics,
+            "techniques": dict(state.mitre_coverage.techniques)
+        }
+        context["todos"] = [
+            {"task": t.task, "status": t.status, "priority": t.priority}
+            for t in state.todos
+        ]
+        context["threat_score"] = state.threat_score
+        context["current_phase"] = state.current_phase
 
-    # Analyze evidence by type
+    return context
+
+
+async def process_agent_query(query: str, context: Dict[str, Any]) -> str:
+    """Process chat query using REAL LLM - no mock responses."""
+
+    # Build comprehensive prompt for the LLM
+    prompt = f"""You are a forensic analyst assistant. Answer questions about the current investigation based on the evidence and analysis provided.
+
+INVESTIGATION CONTEXT:
+- Artifact: {context.get('artifact_name', 'unknown')} ({context.get('artifact_type', 'unknown')})
+- Current Phase: {context.get('current_phase', 'unknown')}
+- Threat Score: {context.get('threat_score', 0):.2f}
+
+EVIDENCE COLLECTED ({len(context.get('evidence', []))} items):
+"""
+
+    # Add evidence summary by type
     evidence_by_type = {}
-    for ev in evidence_list:
-        ev_type = ev.get("type", "unknown")
+    for ev in context.get('evidence', []):
+        ev_type = ev.get('type', 'unknown')
         if ev_type not in evidence_by_type:
             evidence_by_type[ev_type] = []
         evidence_by_type[ev_type].append(ev)
 
-    # Generate contextual response based on query
-    if "process" in query_lower and ("ip" in query_lower or "network" in query_lower or "connect" in query_lower):
-        processes = evidence_by_type.get("process", [])
-        ips = evidence_by_type.get("ip", [])
-        response = f"**Network Connection Analysis**\n\n"
-        response += f"Found {len(processes)} suspicious processes and {len(ips)} external IP connections.\n\n"
-        if ips:
-            response += "**External IP Addresses:**\n"
-            for ip in ips[:5]:
-                conf = (ip.get("confidence", 0.5) * 100)
-                response += f"• `{ip.get('value', 'N/A')}` - {conf:.0f}% confidence\n"
-            if len(ips) > 5:
-                response += f"\n... and {len(ips) - 5} more IPs detected.\n"
-        if processes:
-            response += "\n**Suspicious Processes:**\n"
-            for proc in processes[:5]:
-                response += f"• `{proc.get('value', 'N/A')}`\n"
-        return response
+    for ev_type, items in evidence_by_type.items():
+        prompt += f"\n{ev_type.upper()} ({len(items)} items):\n"
+        for item in items[:5]:
+            prompt += f"  - {item.get('value', 'N/A')} (confidence: {item.get('confidence', 0):.0%}, threat: {item.get('threat_score', 0):.0%})\n"
+        if len(items) > 5:
+            prompt += f"  ... and {len(items) - 5} more\n"
 
-    elif "summary" in query_lower or "malicious" in query_lower or "overview" in query_lower:
-        response = f"**Investigation Summary**\n\n"
-        response += f"• **Analysis Steps:** {len(steps_list)} completed\n"
-        response += f"• **Evidence Items:** {len(evidence_list)} collected\n"
-        total_mitre = sum(len(v) if isinstance(v, list) else 1 for v in mitre_data.values())
-        response += f"• **MITRE Techniques:** {total_mitre} identified\n"
-        response += f"• **Hypotheses:** {len(hypotheses_list)} generated\n\n"
+    # Add MITRE coverage
+    mitre = context.get('mitre', {})
+    if mitre.get('tactics'):
+        prompt += f"\nMITRE ATT&CK TACTICS: {', '.join(mitre['tactics'].keys())}\n"
+    if mitre.get('techniques'):
+        prompt += f"MITRE TECHNIQUES: {', '.join(list(mitre['techniques'].keys())[:10])}\n"
 
-        if hypotheses_list:
-            top_hyp = hypotheses_list[0]
-            conf = (top_hyp.get("confidence", 0.5) * 100)
-            response += f"**Top Hypothesis:** {top_hyp.get('title', 'Unknown')} ({conf:.0f}% confidence)\n"
-            if top_hyp.get("threat_actor"):
-                response += f"• Suspected Actor: {top_hyp.get('threat_actor')}\n"
-            if top_hyp.get("objective"):
-                response += f"• Objective: {top_hyp.get('objective')}\n"
+    # Add hypotheses
+    hypotheses = context.get('hypotheses', [])
+    if hypotheses:
+        prompt += f"\nATTACK HYPOTHESES:\n"
+        for h in hypotheses[:3]:
+            prompt += f"  - {h.get('hypothesis', 'N/A')} (confidence: {h.get('confidence', 0):.0%}, severity: {h.get('severity', 'unknown')})\n"
 
-        # Evidence breakdown
-        if evidence_by_type:
-            response += "\n**Evidence Breakdown:**\n"
-            for ev_type, items in sorted(evidence_by_type.items(), key=lambda x: -len(x[1])):
-                response += f"• {ev_type.upper()}: {len(items)} items\n"
+    # Add recent analysis steps
+    steps = context.get('steps', [])
+    if steps:
+        prompt += f"\nRECENT ANALYSIS STEPS ({len(steps)} total):\n"
+        for step in steps[-5:]:
+            prompt += f"  Step {step.get('step_number', '?')}: {step.get('action', 'N/A')}\n"
+            if step.get('observation'):
+                prompt += f"    Result: {step.get('observation', '')[:100]}...\n"
 
-        return response
+    prompt += f"""
+USER QUESTION: {query}
 
-    elif "persistence" in query_lower:
-        persistence_techs = mitre_data.get("Persistence", []) or mitre_data.get("persistence", [])
-        registry_evidence = evidence_by_type.get("registry", [])
+Provide a detailed, accurate response based ONLY on the evidence and analysis shown above.
+If information is not available, clearly state that.
+Format your response with markdown for readability.
+Be specific about file names, IP addresses, processes, and techniques when discussing findings.
+"""
 
-        response = f"**Persistence Mechanism Analysis**\n\n"
+    try:
+        # Make REAL LLM call
+        request = LLMRequest(
+            prompt=prompt,
+            context=context,
+            max_tokens=1500,
+            temperature=0.3,
+            response_format="text"
+        )
 
-        if persistence_techs:
-            response += f"**MITRE Techniques Detected ({len(persistence_techs)}):**\n"
-            for tech in persistence_techs:
-                response += f"• `{tech}`\n"
+        response = await llm_client.generate(request)
+        return response.content
+
+    except Exception as e:
+        logger.error(f"LLM query failed: {e}")
+        # Fallback to context-based response if LLM fails
+        return _generate_fallback_response(query, context)
+
+
+def _generate_fallback_response(query: str, context: Dict[str, Any]) -> str:
+    """Generate response from context when LLM is unavailable."""
+    query_lower = query.lower()
+    evidence = context.get('evidence', [])
+
+    # Group evidence by type
+    evidence_by_type = {}
+    for ev in evidence:
+        ev_type = ev.get('type', 'unknown')
+        if ev_type not in evidence_by_type:
+            evidence_by_type[ev_type] = []
+        evidence_by_type[ev_type].append(ev)
+
+    response = "**Analysis Based on Collected Evidence**\n\n"
+
+    if 'malicious' in query_lower or 'malware' in query_lower or 'threat' in query_lower:
+        response += f"**Threat Assessment**\n"
+        response += f"- Overall Threat Score: {context.get('threat_score', 0):.0%}\n"
+        response += f"- Evidence Items: {len(evidence)}\n\n"
+
+        # Show high-threat evidence
+        high_threat = [e for e in evidence if e.get('threat_score', 0) > 0.7]
+        if high_threat:
+            response += "**High-Threat Indicators:**\n"
+            for ev in high_threat[:5]:
+                response += f"- [{ev['type']}] `{ev['value']}` (threat: {ev.get('threat_score', 0):.0%})\n"
+
+    elif 'persistence' in query_lower:
+        response += "**Persistence Analysis**\n"
+        registry = evidence_by_type.get('registry_key', [])
+        if registry:
+            response += f"Found {len(registry)} registry modifications:\n"
+            for r in registry[:5]:
+                response += f"- `{r['value']}`\n"
         else:
-            response += "No persistence techniques detected in MITRE mapping.\n"
+            response += "No persistence mechanisms detected yet.\n"
 
-        if registry_evidence:
-            response += f"\n**Registry Modifications ({len(registry_evidence)}):**\n"
-            for reg in registry_evidence[:5]:
-                response += f"• `{reg.get('value', 'N/A')}`\n"
-
-        return response
-
-    elif "credential" in query_lower or "password" in query_lower or "theft" in query_lower:
-        cred_techs = mitre_data.get("Credential Access", []) or mitre_data.get("credential-access", [])
-
-        response = f"**Credential Theft Analysis**\n\n"
-
-        if cred_techs:
-            response += f"**Techniques Detected ({len(cred_techs)}):**\n"
-            for tech in cred_techs:
-                response += f"• `{tech}`\n"
-
-        # Look for credential-related evidence
-        cred_indicators = []
-        for ev in evidence_list:
-            value = str(ev.get("value", "")).lower()
-            if any(kw in value for kw in ["lsass", "mimikatz", "credential", "password", "ntds"]):
-                cred_indicators.append(ev)
-
-        if cred_indicators:
-            response += f"\n**Credential-Related Evidence ({len(cred_indicators)}):**\n"
-            for ev in cred_indicators[:5]:
-                response += f"• [{ev.get('type', 'unknown')}] `{ev.get('value', 'N/A')}`\n"
-
-        if not cred_techs and not cred_indicators:
-            response += "No credential theft indicators detected yet.\n"
-
-        return response
-
-    elif "c2" in query_lower or "command and control" in query_lower or "c&c" in query_lower:
-        c2_techs = mitre_data.get("Command and Control", []) or mitre_data.get("command-and-control", [])
-        domains = evidence_by_type.get("domain", [])
-        ips = evidence_by_type.get("ip", [])
-
-        response = f"**Command & Control Analysis**\n\n"
-
-        if c2_techs:
-            response += f"**MITRE Techniques ({len(c2_techs)}):**\n"
-            for tech in c2_techs:
-                response += f"• `{tech}`\n"
-
-        if domains:
-            response += f"\n**Suspicious Domains ({len(domains)}):**\n"
-            for d in domains[:5]:
-                response += f"• `{d.get('value', 'N/A')}`\n"
-
+    elif 'ip' in query_lower or 'network' in query_lower or 'c2' in query_lower:
+        response += "**Network Analysis**\n"
+        ips = evidence_by_type.get('ip', [])
+        domains = evidence_by_type.get('domain', [])
         if ips:
-            response += f"\n**External IPs ({len(ips)}):**\n"
+            response += f"Found {len(ips)} IP addresses:\n"
             for ip in ips[:5]:
-                response += f"• `{ip.get('value', 'N/A')}`\n"
+                response += f"- `{ip['value']}` (threat: {ip.get('threat_score', 0):.0%})\n"
+        if domains:
+            response += f"\nFound {len(domains)} domains:\n"
+            for d in domains[:5]:
+                response += f"- `{d['value']}`\n"
 
-        return response
+    elif 'process' in query_lower:
+        response += "**Process Analysis**\n"
+        procs = evidence_by_type.get('process', [])
+        if procs:
+            response += f"Found {len(procs)} suspicious processes:\n"
+            for p in procs[:10]:
+                response += f"- `{p['value']}`\n"
+        else:
+            response += "No suspicious processes detected yet.\n"
 
-    elif "ioc" in query_lower or "indicator" in query_lower:
-        response = f"**Indicators of Compromise (IOCs)**\n\n"
+    elif 'file' in query_lower or 'corrupt' in query_lower:
+        response += "**File Analysis**\n"
+        files = evidence_by_type.get('file_path', []) + evidence_by_type.get('file', [])
+        if files:
+            response += f"Found {len(files)} files of interest:\n"
+            for f in files[:10]:
+                response += f"- `{f['value']}`\n"
+        else:
+            response += "No suspicious files detected yet.\n"
 
-        ioc_types = ["ip", "domain", "hash", "file", "url"]
-        for ioc_type in ioc_types:
-            items = evidence_by_type.get(ioc_type, [])
-            if items:
-                response += f"**{ioc_type.upper()}s ({len(items)}):**\n"
-                for item in items[:5]:
-                    response += f"• `{item.get('value', 'N/A')}`\n"
-                if len(items) > 5:
-                    response += f"  ... and {len(items) - 5} more\n"
-                response += "\n"
-
-        return response
+    elif 'hash' in query_lower or 'ioc' in query_lower:
+        response += "**Indicators of Compromise**\n"
+        for ioc_type in ['md5', 'sha1', 'sha256', 'hash']:
+            iocs = evidence_by_type.get(ioc_type, [])
+            if iocs:
+                response += f"\n{ioc_type.upper()} ({len(iocs)}):\n"
+                for ioc in iocs[:5]:
+                    response += f"- `{ioc['value']}`\n"
 
     else:
-        # Generic response
-        response = f"**Investigation Query Analysis**\n\n"
-        response += f"Query: \"{query}\"\n\n"
-        response += f"**Current Status:**\n"
-        response += f"• {len(steps_list)} analysis steps completed\n"
-        response += f"• {len(evidence_list)} evidence items collected\n"
-        total_mitre = sum(len(v) if isinstance(v, list) else 1 for v in mitre_data.values())
-        response += f"• {total_mitre} MITRE techniques identified\n\n"
+        # General summary
+        response += f"**Investigation Summary**\n"
+        response += f"- Phase: {context.get('current_phase', 'unknown')}\n"
+        response += f"- Total Evidence: {len(evidence)}\n"
+        response += f"- Threat Score: {context.get('threat_score', 0):.0%}\n\n"
 
-        response += "**Available Query Topics:**\n"
-        response += "• Process and network connections\n"
-        response += "• Malicious activity summary\n"
-        response += "• Persistence mechanisms\n"
-        response += "• Credential theft indicators\n"
-        response += "• Command & Control analysis\n"
-        response += "• IOC extraction\n"
+        response += "**Evidence Breakdown:**\n"
+        for ev_type, items in sorted(evidence_by_type.items(), key=lambda x: -len(x[1])):
+            response += f"- {ev_type}: {len(items)} items\n"
 
-        return response
+        response += "\n**Available Queries:**\n"
+        response += "- What malicious activity was found?\n"
+        response += "- What persistence mechanisms were used?\n"
+        response += "- Show network/IP connections\n"
+        response += "- List suspicious processes\n"
+        response += "- Show file analysis\n"
+        response += "- List IOCs/hashes\n"
+
+    return response
+
+
+def _generate_real_report(state, format: str) -> Dict[str, Any]:
+    """Generate report from real agent state."""
+    report = {
+        "session_id": state.session_id,
+        "artifact": {
+            "name": state.scenario.artifact_name,
+            "type": state.scenario.artifact_type,
+            "path": state.scenario.artifact_path
+        },
+        "investigation": {
+            "status": state.status,
+            "current_phase": state.current_phase,
+            "total_steps": len(state.steps),
+            "total_evidence": len(state.evidence),
+            "threat_score": state.threat_score,
+            "confidence": state.overall_confidence,
+            "started_at": state.started_at.isoformat(),
+            "completed_at": state.completed_at.isoformat() if state.completed_at else None
+        },
+        "evidence": [
+            {
+                "type": e.type,
+                "value": e.value,
+                "confidence": e.confidence,
+                "threat_score": e.threat_score,
+                "source": e.source,
+                "mitre_tactics": e.mitre_tactics,
+                "mitre_techniques": e.mitre_techniques
+            }
+            for e in state.evidence
+        ],
+        "hypotheses": [
+            {
+                "hypothesis": h.hypothesis,
+                "confidence": h.confidence,
+                "severity": h.severity,
+                "supporting_evidence": h.supporting_evidence,
+                "mitre_tactics": h.mitre_tactics
+            }
+            for h in state.hypotheses
+        ],
+        "mitre_coverage": {
+            "tactics": state.mitre_coverage.tactics,
+            "techniques": dict(state.mitre_coverage.techniques),
+            "total_tactics": state.mitre_coverage.total_tactics,
+            "total_techniques": state.mitre_coverage.total_techniques
+        },
+        "timeline": [
+            {
+                "step_number": s.step_number,
+                "timestamp": s.timestamp.isoformat(),
+                "action": s.action,
+                "evidence_found": len(s.evidence_found)
+            }
+            for s in state.steps
+        ]
+    }
+
+    return report
 
 
 # ============================================================================
-# WebSocket Endpoint
+# WebSocket Endpoint - REAL Agent Only
 # ============================================================================
 
 @app.websocket("/ws/agent/{session_id}")
 async def websocket_agent(websocket: WebSocket, session_id: str):
-    """
-    WebSocket endpoint for real-time investigation updates.
-
-    Messages sent to client:
-    - step: New analysis step with full details
-    - evidence: New evidence discovered
-    - progress: Progress update
-    - complete: Investigation complete
-    - error: Error occurred
-    """
+    """WebSocket endpoint for real-time autonomous investigation."""
     session = session_manager.get_session(session_id)
     if not session:
         await websocket.close(code=4004, reason="Session not found")
@@ -530,53 +1096,82 @@ async def websocket_agent(websocket: WebSocket, session_id: str):
     logger.info(f"WebSocket connected for session {session_id}")
 
     try:
-        # Start the forensic agent
-        agent = MockForensicAgent(session_id, session_manager, ws_manager)
+        orch = get_orchestrator()
 
-        # Run analysis in background
-        import asyncio
-        analysis_task = asyncio.create_task(agent.run_investigation())
+        async def ws_callback(payload: dict):
+            try:
+                await ws_manager.send_to_session(session_id, payload)
+            except Exception as e:
+                logger.error(f"Failed to send WebSocket update: {e}")
 
-        # Listen for client messages
+        orch.websocket_callback = ws_callback
+        state = orch.get_state(session_id)
+
+        if not state:
+            logger.info(f"Starting autonomous investigation for session {session_id}")
+
+            import asyncio
+            asyncio.create_task(
+                orch.start_investigation(
+                    session_id=session_id,
+                    artifact_path=session['artifact_path'],
+                    artifact_type=session['artifact_type'],
+                    artifact_name=session['artifact_name'],
+                    description=session.get('description', '')
+                )
+            )
+        else:
+            logger.info(f"Reconnected to investigation for session {session_id}")
+            await ws_manager.send_to_session(session_id, {
+                "type": "state_sync",
+                "data": {
+                    "steps": [{"step_number": s.step_number, "reasoning": s.reasoning[:100] if s.reasoning else ""} for s in state.steps],
+                    "evidence_count": len(state.evidence),
+                    "progress": min((len(state.steps) / 50.0) * 100, 100)
+                }
+            })
+
         while True:
             try:
                 data = await websocket.receive_json()
 
-                if data.get("type") == "instruction":
+                if data.get("type") == "llm_query":
+                    state = orch.get_state(session_id)
+                    context = _build_chat_context(state, session)
+                    response = await process_agent_query(data.get("message", ""), context)
+
+                    await ws_manager.send_to_session(session_id, {
+                        "type": "llm_response",
+                        "data": {"response": response}
+                    })
+
+                elif data.get("type") == "instruction":
                     session_manager.add_instruction(session_id, data.get("message", ""))
                     await ws_manager.send_to_session(session_id, {
                         "type": "instruction_ack",
                         "message": data.get("message"),
                     })
-                elif data.get("type") == "llm_query":
-                    # Handle LLM query with investigation context
-                    response = await process_llm_query(
-                        data.get("message", ""),
-                        data.get("context", {}),
-                        session
-                    )
-                    await ws_manager.send_to_session(session_id, {
-                        "type": "llm_response",
-                        "data": {"response": response}
-                    })
-                elif data.get("type") == "pause":
-                    agent.pause()
-                elif data.get("type") == "resume":
-                    agent.resume()
+
                 elif data.get("type") == "stop":
-                    agent.stop()
+                    logger.info(f"Stopping investigation for session {session_id}")
+                    state = orch.get_state(session_id)
+                    if state:
+                        state.status = "completed"
                     break
 
             except WebSocketDisconnect:
                 logger.info(f"WebSocket disconnected for session {session_id}")
                 break
+            except Exception as e:
+                logger.error(f"Error processing WebSocket message: {e}")
+                await ws_manager.send_to_session(session_id, {
+                    "type": "error",
+                    "message": f"Error: {str(e)}"
+                })
 
     except Exception as e:
         logger.exception(f"WebSocket error for session {session_id}")
-        await ws_manager.send_to_session(session_id, {
-            "type": "error",
-            "message": str(e),
-        })
+        await ws_manager.send_to_session(session_id, {"type": "error", "message": str(e)})
     finally:
         ws_manager.disconnect(websocket, session_id)
 
@@ -588,67 +1183,46 @@ async def websocket_agent(websocket: WebSocket, session_id: str):
 def _detect_artifact_type(extension: str, header_bytes: bytes) -> str:
     """Auto-detect artifact type from extension and file header."""
     ext_mapping = {
-        ".raw": "memory_dump",
-        ".mem": "memory_dump",
-        ".dmp": "memory_dump",
-        ".vmem": "memory_dump",
-        ".img": "disk_image",
-        ".dd": "disk_image",
-        ".e01": "disk_image",
-        ".evtx": "evtx",
-        ".pcap": "pcap",
-        ".pcapng": "pcap",
-        ".exe": "malware_sample",
-        ".dll": "malware_sample",
-        ".bin": "binary",
-        ".zip": "archive",
-        ".tar": "archive",
+        ".raw": "memory_dump", ".mem": "memory_dump", ".dmp": "memory_dump", ".vmem": "memory_dump",
+        ".img": "disk_image", ".dd": "disk_image", ".e01": "disk_image",
+        ".evtx": "evtx", ".pcap": "pcap", ".pcapng": "pcap",
+        ".exe": "malware_sample", ".dll": "malware_sample",
+        ".bin": "binary", ".zip": "archive", ".tar": "archive",
     }
 
-    # Check magic bytes
-    if header_bytes[:4] == b"MZ\x90\x00" or header_bytes[:2] == b"MZ":
+    if header_bytes[:2] == b"MZ":
         return "malware_sample"
     if header_bytes[:4] == b"\x7fELF":
         return "malware_sample"
     if header_bytes[:8] == b"ElfChnk\x00":
         return "evtx"
-    if header_bytes[:4] == b"\xd4\xc3\xb2\xa1" or header_bytes[:4] == b"\xa1\xb2\xc3\xd4":
+    if header_bytes[:4] in [b"\xd4\xc3\xb2\xa1", b"\xa1\xb2\xc3\xd4"]:
         return "pcap"
 
     return ext_mapping.get(extension.lower(), "unknown")
 
 
-# ============================================================================
-# Health Check
-# ============================================================================
-
 @app.get("/health")
 async def health_check():
     """Health check endpoint."""
+    orch = get_orchestrator()
     return {
         "status": "healthy",
         "timestamp": datetime.utcnow().isoformat(),
-        "active_sessions": len(session_manager.list_sessions()),
+        "active_sessions": len(orch.list_sessions()),
+        "llm_endpoint": LLM_BASE_URL,
     }
 
-
-# ============================================================================
-# Main Entry Point
-# ============================================================================
 
 if __name__ == "__main__":
     import uvicorn
     print("\n" + "="*60)
-    print("  Autonomous Forensic Orchestrator")
+    print("  Autonomous Forensic Orchestrator v2.0")
+    print("  NO MOCK DATA - Real LLM Integration")
     print("="*60)
     print(f"\n  UI:   http://localhost:8000")
     print(f"  API:  http://localhost:8000/docs")
-    print(f"  Health: http://localhost:8000/health")
+    print(f"  LLM:  {LLM_BASE_URL}")
     print("\n" + "="*60 + "\n")
 
-    uvicorn.run(
-        app,
-        host="0.0.0.0",
-        port=8000,
-        log_level="info",
-    )
+    uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")

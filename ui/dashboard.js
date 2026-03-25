@@ -4,13 +4,14 @@
  */
 
 // API Base - use server URL, detect if running from file:// protocol
-const API_BASE = window.location.protocol === 'file:'
-    ? 'http://localhost:8000'
-    : window.location.origin;
+const API_BASE =
+    window.location.protocol === "file:"
+        ? "http://localhost:8000"
+        : window.location.origin;
 const WS_BASE = API_BASE.replace("http", "ws");
 
-console.log('API Base:', API_BASE);
-console.log('WebSocket Base:', WS_BASE);
+console.log("API Base:", API_BASE);
+console.log("WebSocket Base:", WS_BASE);
 
 // Get session ID from URL
 const urlParams = new URLSearchParams(window.location.search);
@@ -73,45 +74,152 @@ let networkNodes = null;
 let networkEdges = null;
 let charts = {};
 let physicsEnabled = true;
+let soundEnabled = true;
+let currentFilter = "all";
+let searchTerm = "";
+let isFullscreen = false;
+
+// Audio context for sound effects
+let audioContext = null;
+
+// Investigation phases for breadcrumb
+const INVESTIGATION_PHASES = [
+    { id: "upload", name: "Upload", progress: 0 },
+    { id: "analysis", name: "Analysis", progress: 20 },
+    { id: "deep_analysis", name: "Deep Analysis", progress: 40 },
+    { id: "enrichment", name: "Enrichment", progress: 55 },
+    { id: "detection", name: "Detection", progress: 70 },
+    { id: "correlation", name: "Correlation", progress: 85 },
+    { id: "complete", name: "Complete", progress: 100 },
+];
 
 // MITRE ATT&CK Tactics (ordered)
 const MITRE_TACTICS = [
-    { id: 'reconnaissance', name: 'Reconnaissance', color: '#6366f1' },
-    { id: 'resource-development', name: 'Resource Development', color: '#8b5cf6' },
-    { id: 'initial-access', name: 'Initial Access', color: '#ec4899' },
-    { id: 'execution', name: 'Execution', color: '#ef4444' },
-    { id: 'persistence', name: 'Persistence', color: '#f97316' },
-    { id: 'privilege-escalation', name: 'Privilege Escalation', color: '#f59e0b' },
-    { id: 'defense-evasion', name: 'Defense Evasion', color: '#eab308' },
-    { id: 'credential-access', name: 'Credential Access', color: '#84cc16' },
-    { id: 'discovery', name: 'Discovery', color: '#22c55e' },
-    { id: 'lateral-movement', name: 'Lateral Movement', color: '#10b981' },
-    { id: 'collection', name: 'Collection', color: '#14b8a6' },
-    { id: 'command-and-control', name: 'Command & Control', color: '#06b6d4' },
-    { id: 'exfiltration', name: 'Exfiltration', color: '#0ea5e9' },
-    { id: 'impact', name: 'Impact', color: '#3b82f6' }
+    { id: "reconnaissance", name: "Reconnaissance", color: "#6366f1" },
+    {
+        id: "resource-development",
+        name: "Resource Development",
+        color: "#8b5cf6",
+    },
+    { id: "initial-access", name: "Initial Access", color: "#ec4899" },
+    { id: "execution", name: "Execution", color: "#ef4444" },
+    { id: "persistence", name: "Persistence", color: "#f97316" },
+    {
+        id: "privilege-escalation",
+        name: "Privilege Escalation",
+        color: "#f59e0b",
+    },
+    { id: "defense-evasion", name: "Defense Evasion", color: "#eab308" },
+    { id: "credential-access", name: "Credential Access", color: "#84cc16" },
+    { id: "discovery", name: "Discovery", color: "#22c55e" },
+    { id: "lateral-movement", name: "Lateral Movement", color: "#10b981" },
+    { id: "collection", name: "Collection", color: "#14b8a6" },
+    { id: "command-and-control", name: "Command & Control", color: "#06b6d4" },
+    { id: "exfiltration", name: "Exfiltration", color: "#0ea5e9" },
+    { id: "impact", name: "Impact", color: "#3b82f6" },
 ];
 
 // Sample MITRE Techniques for demo (subset)
 const MITRE_TECHNIQUES_DB = {
-    'T1566': { name: 'Phishing', tactic: 'initial-access', description: 'Adversaries may send phishing messages to gain access to victim systems.' },
-    'T1566.001': { name: 'Spearphishing Attachment', tactic: 'initial-access', description: 'Adversaries may send spearphishing emails with a malicious attachment.' },
-    'T1059': { name: 'Command and Scripting Interpreter', tactic: 'execution', description: 'Adversaries may abuse command and script interpreters to execute commands.' },
-    'T1059.001': { name: 'PowerShell', tactic: 'execution', description: 'Adversaries may abuse PowerShell commands and scripts for execution.' },
-    'T1059.003': { name: 'Windows Command Shell', tactic: 'execution', description: 'Adversaries may abuse the Windows command shell for execution.' },
-    'T1547': { name: 'Boot or Logon Autostart Execution', tactic: 'persistence', description: 'Adversaries may configure system settings to run programs at boot.' },
-    'T1547.001': { name: 'Registry Run Keys', tactic: 'persistence', description: 'Adversaries may add entries to the Registry to run programs at boot.' },
-    'T1055': { name: 'Process Injection', tactic: 'defense-evasion', description: 'Adversaries may inject code into processes to evade detection.' },
-    'T1055.001': { name: 'DLL Injection', tactic: 'defense-evasion', description: 'Adversaries may inject DLLs into running processes.' },
-    'T1003': { name: 'OS Credential Dumping', tactic: 'credential-access', description: 'Adversaries may dump credentials from the OS.' },
-    'T1003.001': { name: 'LSASS Memory', tactic: 'credential-access', description: 'Adversaries may dump LSASS memory to obtain credentials.' },
-    'T1087': { name: 'Account Discovery', tactic: 'discovery', description: 'Adversaries may attempt to discover accounts.' },
-    'T1082': { name: 'System Information Discovery', tactic: 'discovery', description: 'Adversaries may gather system information.' },
-    'T1021': { name: 'Remote Services', tactic: 'lateral-movement', description: 'Adversaries may use remote services to move laterally.' },
-    'T1071': { name: 'Application Layer Protocol', tactic: 'command-and-control', description: 'Adversaries may communicate using application layer protocols.' },
-    'T1071.001': { name: 'Web Protocols', tactic: 'command-and-control', description: 'Adversaries may use web protocols for C2.' },
-    'T1041': { name: 'Exfiltration Over C2 Channel', tactic: 'exfiltration', description: 'Adversaries may exfiltrate data over the C2 channel.' },
-    'T1486': { name: 'Data Encrypted for Impact', tactic: 'impact', description: 'Adversaries may encrypt data to interrupt availability.' }
+    T1566: {
+        name: "Phishing",
+        tactic: "initial-access",
+        description:
+            "Adversaries may send phishing messages to gain access to victim systems.",
+    },
+    "T1566.001": {
+        name: "Spearphishing Attachment",
+        tactic: "initial-access",
+        description:
+            "Adversaries may send spearphishing emails with a malicious attachment.",
+    },
+    T1059: {
+        name: "Command and Scripting Interpreter",
+        tactic: "execution",
+        description:
+            "Adversaries may abuse command and script interpreters to execute commands.",
+    },
+    "T1059.001": {
+        name: "PowerShell",
+        tactic: "execution",
+        description:
+            "Adversaries may abuse PowerShell commands and scripts for execution.",
+    },
+    "T1059.003": {
+        name: "Windows Command Shell",
+        tactic: "execution",
+        description:
+            "Adversaries may abuse the Windows command shell for execution.",
+    },
+    T1547: {
+        name: "Boot or Logon Autostart Execution",
+        tactic: "persistence",
+        description:
+            "Adversaries may configure system settings to run programs at boot.",
+    },
+    "T1547.001": {
+        name: "Registry Run Keys",
+        tactic: "persistence",
+        description:
+            "Adversaries may add entries to the Registry to run programs at boot.",
+    },
+    T1055: {
+        name: "Process Injection",
+        tactic: "defense-evasion",
+        description:
+            "Adversaries may inject code into processes to evade detection.",
+    },
+    "T1055.001": {
+        name: "DLL Injection",
+        tactic: "defense-evasion",
+        description: "Adversaries may inject DLLs into running processes.",
+    },
+    T1003: {
+        name: "OS Credential Dumping",
+        tactic: "credential-access",
+        description: "Adversaries may dump credentials from the OS.",
+    },
+    "T1003.001": {
+        name: "LSASS Memory",
+        tactic: "credential-access",
+        description: "Adversaries may dump LSASS memory to obtain credentials.",
+    },
+    T1087: {
+        name: "Account Discovery",
+        tactic: "discovery",
+        description: "Adversaries may attempt to discover accounts.",
+    },
+    T1082: {
+        name: "System Information Discovery",
+        tactic: "discovery",
+        description: "Adversaries may gather system information.",
+    },
+    T1021: {
+        name: "Remote Services",
+        tactic: "lateral-movement",
+        description: "Adversaries may use remote services to move laterally.",
+    },
+    T1071: {
+        name: "Application Layer Protocol",
+        tactic: "command-and-control",
+        description:
+            "Adversaries may communicate using application layer protocols.",
+    },
+    "T1071.001": {
+        name: "Web Protocols",
+        tactic: "command-and-control",
+        description: "Adversaries may use web protocols for C2.",
+    },
+    T1041: {
+        name: "Exfiltration Over C2 Channel",
+        tactic: "exfiltration",
+        description: "Adversaries may exfiltrate data over the C2 channel.",
+    },
+    T1486: {
+        name: "Data Encrypted for Impact",
+        tactic: "impact",
+        description: "Adversaries may encrypt data to interrupt availability.",
+    },
 };
 
 // ============================================================================
@@ -125,6 +233,10 @@ document.addEventListener("DOMContentLoaded", () => {
     initViews();
     initMitreMatrix();
     initCharts();
+    setupKeyboardShortcuts();
+    setupEvidenceFilters();
+    setupNetworkSearchAndControls();
+    initAudioContext();
 });
 
 // ============================================================================
@@ -132,38 +244,38 @@ document.addEventListener("DOMContentLoaded", () => {
 // ============================================================================
 
 function initViews() {
-    const viewBtns = document.querySelectorAll('.view-btn');
-    viewBtns.forEach(btn => {
-        btn.addEventListener('click', () => {
+    const viewBtns = document.querySelectorAll(".view-btn");
+    viewBtns.forEach((btn) => {
+        btn.addEventListener("click", () => {
             const viewId = btn.dataset.view;
             switchView(viewId);
 
             // Update active button
-            viewBtns.forEach(b => b.classList.remove('active'));
-            btn.classList.add('active');
+            viewBtns.forEach((b) => b.classList.remove("active"));
+            btn.classList.add("active");
         });
     });
 }
 
 function switchView(viewId) {
     // Hide all views
-    document.querySelectorAll('.dashboard-view').forEach(view => {
-        view.classList.remove('active');
+    document.querySelectorAll(".dashboard-view").forEach((view) => {
+        view.classList.remove("active");
     });
 
     // Show selected view
     const selectedView = document.getElementById(`view-${viewId}`);
     if (selectedView) {
-        selectedView.classList.add('active');
+        selectedView.classList.add("active");
     }
 
     // Initialize network graph if switching to network view
-    if (viewId === 'network' && !networkGraph) {
+    if (viewId === "network" && !networkGraph) {
         initNetworkGraph();
     }
 
     // Update charts if switching to charts view
-    if (viewId === 'charts') {
+    if (viewId === "charts") {
         updateAllCharts();
     }
 }
@@ -266,7 +378,10 @@ function handleMessage(message) {
             handleError(message.data);
             break;
         case "instruction_ack":
-            addChatMessage("agent", `Instruction received: "${message.message}"`);
+            addChatMessage(
+                "agent",
+                `Instruction received: "${message.message}"`,
+            );
             break;
         case "llm_response":
             handleLLMResponse(message.data);
@@ -277,41 +392,6 @@ function handleMessage(message) {
     }
 }
 
-function handleStep(step) {
-    steps.push(step);
-    stepsCount.textContent = steps.length;
-
-    // Remove empty state if present
-    const emptyState = stepsFeed.querySelector(".empty-state");
-    if (emptyState) emptyState.remove();
-
-    // Create step card
-    const stepCard = document.createElement("div");
-    stepCard.className = "step-card";
-    stepCard.innerHTML = `
-        <div class="step-header">
-            <span class="step-number">${step.step_number}</span>
-            <span class="step-tool">${step.tool}</span>
-            <span class="step-phase">${step.phase}</span>
-        </div>
-        <p class="step-thought">${truncate(step.thought, 150)}</p>
-        <p class="step-action">${truncate(step.action, 100)}</p>
-        <p class="step-evidence-count">${step.evidence?.length || 0} evidence items extracted</p>
-    `;
-
-    stepCard.addEventListener("click", () => showStepDetail(step));
-    stepsFeed.appendChild(stepCard);
-    stepsFeed.scrollTop = stepsFeed.scrollHeight;
-
-    // Update network graph
-    if (step.evidence) {
-        step.evidence.forEach(ev => addToNetworkGraph(ev, step));
-    }
-
-    // Update charts
-    updateToolsChart();
-}
-
 function handleEvidence(ev) {
     evidence.push(ev);
     evidenceCount.textContent = evidence.length;
@@ -320,14 +400,37 @@ function handleEvidence(ev) {
     const emptyState = evidenceGrid.querySelector(".empty-state");
     if (emptyState) emptyState.remove();
 
-    // Create evidence card
+    // Create evidence card with enhanced features
     const evCard = document.createElement("div");
     evCard.className = `evidence-card type-${ev.type}`;
     const confidence = (ev.confidence * 100).toFixed(0);
+    const threatScore = (ev.threat_score || ev.confidence || 0.5) * 100;
+    const threatLevel =
+        threatScore > 75
+            ? "critical"
+            : threatScore > 50
+              ? "high"
+              : threatScore > 25
+                ? "medium"
+                : "low";
 
     evCard.innerHTML = `
-        <div class="evidence-type">${ev.type}</div>
-        <div class="evidence-value">${truncate(ev.value, 50)}</div>
+        <div class="evidence-header">
+            <div class="evidence-type">${ev.type}</div>
+            <button class="copy-btn" onclick="copyToClipboard('${ev.value.replace(/'/g, "\\'")}', event)" title="Copy to clipboard">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                </svg>
+            </button>
+        </div>
+        <div class="evidence-value" title="${ev.value}">${truncate(ev.value, 50)}</div>
+        <div class="threat-bar">
+            <div class="threat-label">Threat: <span class="threat-level ${threatLevel}">${threatLevel.toUpperCase()}</span></div>
+            <div class="threat-indicator">
+                <div class="threat-fill ${threatLevel}" style="width: ${threatScore}%"></div>
+            </div>
+        </div>
         <div class="evidence-confidence">
             <span>Confidence:</span>
             <div class="confidence-bar">
@@ -335,22 +438,43 @@ function handleEvidence(ev) {
             </div>
             <span>${confidence}%</span>
         </div>
+        <div class="evidence-tooltip">
+            <strong>Type:</strong> ${ev.type}<br>
+            <strong>Value:</strong> ${ev.value}<br>
+            <strong>Confidence:</strong> ${confidence}%<br>
+            <strong>Threat Score:</strong> ${threatScore.toFixed(0)}%<br>
+            ${ev.source ? `<strong>Source:</strong> ${ev.source}<br>` : ""}
+            ${ev.timestamp ? `<strong>Time:</strong> ${formatTime(ev.timestamp)}` : ""}
+        </div>
     `;
 
     evidenceGrid.appendChild(evCard);
 
-    // Update network graph
+    // Play sound for high-threat evidence
+    if (threatScore > 75) {
+        playSound("alert");
+    } else {
+        playSound("evidence");
+    }
+
+    // Update network graph with animation
     addToNetworkGraph(ev);
 
     // Update charts
     updateEvidenceChart();
     updateThreatScoreChart(ev);
+
+    // Re-apply filters
+    filterEvidence();
 }
 
 function handleProgress(data) {
     progressPhase.textContent = formatPhase(data.phase);
     progressPercent.textContent = `${data.progress.toFixed(0)}%`;
     progressFill.style.width = `${data.progress}%`;
+
+    // Update breadcrumb navigation
+    updateBreadcrumb(data.phase, data.progress);
 
     // Update timeline chart
     updateTimelineChart(data);
@@ -407,14 +531,17 @@ function renderMitreGrid() {
     if (emptyState) emptyState.remove();
 
     mitreGrid.innerHTML = Object.entries(mitreTechniques)
-        .map(([tactic, techniques]) => `
+        .map(
+            ([tactic, techniques]) => `
             <div class="mitre-tactic">
                 <div class="mitre-tactic-name">${tactic}</div>
                 <div class="mitre-techniques">
-                    ${techniques.map(t => `<span class="technique-badge" onclick="showMitreDetail('${t}')">${t}</span>`).join("")}
+                    ${techniques.map((t) => `<span class="technique-badge" onclick="showMitreDetail('${t}')">${t}</span>`).join("")}
                 </div>
             </div>
-        `).join("");
+        `,
+        )
+        .join("");
 }
 
 function handleHypothesis(hypothesis) {
@@ -485,16 +612,21 @@ function handleLLMResponse(data) {
 }
 
 function handleFullState(state) {
-    if (state.steps) state.steps.forEach(step => handleStep(step));
-    if (state.evidence) state.evidence.forEach(ev => handleEvidence(ev));
-    if (state.timeline) state.timeline.forEach(event => handleTimelineEvent(event));
+    if (state.steps) state.steps.forEach((step) => handleStep(step));
+    if (state.evidence) state.evidence.forEach((ev) => handleEvidence(ev));
+    if (state.timeline)
+        state.timeline.forEach((event) => handleTimelineEvent(event));
     if (state.mitre_coverage) {
         mitreTechniques = state.mitre_coverage;
         renderMitreGrid();
     }
-    if (state.hypotheses) state.hypotheses.forEach(hyp => handleHypothesis(hyp));
+    if (state.hypotheses)
+        state.hypotheses.forEach((hyp) => handleHypothesis(hyp));
     if (state.progress !== undefined) {
-        handleProgress({ progress: state.progress, phase: state.current_phase });
+        handleProgress({
+            progress: state.progress,
+            phase: state.current_phase,
+        });
     }
 }
 
@@ -503,7 +635,7 @@ function handleFullState(state) {
 // ============================================================================
 
 function initNetworkGraph() {
-    const container = document.getElementById('network-graph');
+    const container = document.getElementById("network-graph");
     if (!container) return;
 
     networkNodes = new vis.DataSet([]);
@@ -513,17 +645,17 @@ function initNetworkGraph() {
 
     const options = {
         nodes: {
-            shape: 'dot',
+            shape: "dot",
             size: 20,
-            font: { color: '#f3f4f6', size: 12 },
+            font: { color: "#f3f4f6", size: 12 },
             borderWidth: 2,
-            shadow: true
+            shadow: true,
         },
         edges: {
             width: 2,
-            color: { color: '#4b5563', highlight: '#00d4ff', hover: '#00d4ff' },
+            color: { color: "#4b5563", highlight: "#00d4ff", hover: "#00d4ff" },
             arrows: { to: { enabled: true, scaleFactor: 0.5 } },
-            smooth: { type: 'continuous' }
+            smooth: { type: "continuous" },
         },
         physics: {
             enabled: true,
@@ -531,58 +663,229 @@ function initNetworkGraph() {
                 gravitationalConstant: -2000,
                 centralGravity: 0.3,
                 springLength: 150,
-                springConstant: 0.04
-            }
+                springConstant: 0.04,
+            },
         },
         interaction: {
             hover: true,
-            tooltipDelay: 100
-        }
+            tooltipDelay: 100,
+        },
     };
 
     networkGraph = new vis.Network(container, data, options);
 
     // Add controls
-    document.getElementById('network-fit')?.addEventListener('click', () => {
+    document.getElementById("network-fit")?.addEventListener("click", () => {
         networkGraph.fit();
     });
 
-    document.getElementById('network-physics')?.addEventListener('click', () => {
-        physicsEnabled = !physicsEnabled;
-        networkGraph.setOptions({ physics: { enabled: physicsEnabled } });
+    document
+        .getElementById("network-physics")
+        ?.addEventListener("click", () => {
+            physicsEnabled = !physicsEnabled;
+            networkGraph.setOptions({ physics: { enabled: physicsEnabled } });
+        });
+
+    // Add existing evidence to graph with connections
+    populateNetworkFromEvidence();
+
+    // Fit view after a short delay to let physics settle
+    setTimeout(() => {
+        if (networkGraph) networkGraph.fit();
+    }, 500);
+}
+
+function populateNetworkFromEvidence() {
+    if (!networkNodes || !networkEdges) return;
+
+    // Group evidence by step for better connections
+    const stepEvidence = {};
+    steps.forEach((step) => {
+        if (step.evidence) {
+            stepEvidence[step.step_number] = {
+                tool: step.tool,
+                evidence: step.evidence,
+            };
+        }
     });
 
-    // Add existing evidence to graph
-    evidence.forEach(ev => addToNetworkGraph(ev));
+    // Add all evidence nodes
+    evidence.forEach((ev) => {
+        addEvidenceNode(ev);
+    });
+
+    // Create connections between related evidence
+    createEvidenceConnections();
+
+    // Update stats
+    updateNetworkStats();
+}
+
+function addEvidenceNode(ev) {
+    if (!networkNodes) return;
+
+    const nodeColors = {
+        ip: { background: "#ef4444", border: "#dc2626" },
+        domain: { background: "#f97316", border: "#ea580c" },
+        process: { background: "#3b82f6", border: "#2563eb" },
+        file: { background: "#22c55e", border: "#16a34a" },
+        hash: { background: "#eab308", border: "#ca8a04" },
+        malware: { background: "#dc2626", border: "#b91c1c" },
+        command: { background: "#a855f7", border: "#9333ea" },
+        registry: { background: "#06b6d4", border: "#0891b2" },
+        url: { background: "#ec4899", border: "#db2777" },
+    };
+
+    const nodeId = `${ev.type}-${ev.value}`;
+    const color = nodeColors[ev.type] || {
+        background: "#6b7280",
+        border: "#4b5563",
+    };
+    const threatScore = ev.threat_score || ev.confidence || 0.5;
+
+    // Size based on threat score
+    const nodeSize = 15 + threatScore * 20;
+
+    if (!networkNodes.get(nodeId)) {
+        networkNodes.add({
+            id: nodeId,
+            label: truncate(ev.value, 25),
+            title: `<strong>${ev.type.toUpperCase()}</strong><br>${ev.value}<br>Confidence: ${(ev.confidence * 100).toFixed(0)}%`,
+            color: color,
+            group: ev.type,
+            size: nodeSize,
+            font: { size: 10, color: "#f3f4f6" },
+        });
+    }
+
+    return nodeId;
+}
+
+function createEvidenceConnections() {
+    if (!networkNodes || !networkEdges) return;
+
+    // Create a central "Investigation" node
+    if (!networkNodes.get("investigation-center")) {
+        networkNodes.add({
+            id: "investigation-center",
+            label: "Investigation",
+            title: "Central Investigation Node",
+            color: { background: "#8b5cf6", border: "#7c3aed" },
+            shape: "diamond",
+            size: 30,
+            font: { size: 14, color: "#f3f4f6", bold: true },
+        });
+    }
+
+    // Create tool nodes and connect evidence
+    const toolNodes = {};
+    steps.forEach((step) => {
+        const toolNodeId = `tool-${step.tool}`;
+        if (
+            !toolNodes[step.tool] &&
+            step.evidence &&
+            step.evidence.length > 0
+        ) {
+            toolNodes[step.tool] = true;
+            if (!networkNodes.get(toolNodeId)) {
+                networkNodes.add({
+                    id: toolNodeId,
+                    label: step.tool,
+                    title: `Tool: ${step.tool}<br>Category: ${step.tool_category}`,
+                    color: { background: "#10b981", border: "#059669" },
+                    shape: "box",
+                    size: 20,
+                    font: { size: 11, color: "#f3f4f6" },
+                });
+
+                // Connect tool to center
+                networkEdges.add({
+                    from: "investigation-center",
+                    to: toolNodeId,
+                    color: { color: "#4b5563", opacity: 0.5 },
+                    width: 1,
+                    dashes: true,
+                });
+            }
+
+            // Connect evidence to tool
+            step.evidence.forEach((ev) => {
+                const nodeId = `${ev.type}-${ev.value}`;
+                const edgeId = `${toolNodeId}-${nodeId}`;
+                if (networkNodes.get(nodeId) && !networkEdges.get(edgeId)) {
+                    networkEdges.add({
+                        id: edgeId,
+                        from: toolNodeId,
+                        to: nodeId,
+                        color: { color: "#6b7280" },
+                        width: 1,
+                    });
+                }
+            });
+        }
+    });
+
+    // Connect related evidence (same type connections for clusters)
+    const evidenceByType = {};
+    evidence.forEach((ev) => {
+        if (!evidenceByType[ev.type]) evidenceByType[ev.type] = [];
+        evidenceByType[ev.type].push(ev);
+    });
+
+    // Connect IPs to domains (if they look related)
+    const ips = evidenceByType["ip"] || [];
+    const domains = evidenceByType["domain"] || [];
+
+    // Connect processes to commands
+    const processes = evidenceByType["process"] || [];
+    const commands = evidenceByType["command"] || [];
+
+    processes.forEach((proc) => {
+        commands.forEach((cmd) => {
+            if (
+                cmd.value
+                    .toLowerCase()
+                    .includes(proc.value.toLowerCase().split(".")[0])
+            ) {
+                const edgeId = `proc-cmd-${proc.value}-${cmd.value}`;
+                if (!networkEdges.get(edgeId)) {
+                    networkEdges.add({
+                        id: edgeId,
+                        from: `process-${proc.value}`,
+                        to: `command-${cmd.value}`,
+                        color: { color: "#a855f7", opacity: 0.6 },
+                        width: 2,
+                        dashes: [5, 5],
+                    });
+                }
+            }
+        });
+    });
+}
+
+function updateNetworkStats() {
+    const nodesCount = networkNodes ? networkNodes.length : 0;
+    const edgesCount = networkEdges ? networkEdges.length : 0;
+
+    // Count unique clusters (groups)
+    const groups = new Set();
+    if (networkNodes) {
+        networkNodes.forEach((node) => {
+            if (node.group) groups.add(node.group);
+        });
+    }
+
+    document.getElementById("stat-nodes").textContent = nodesCount;
+    document.getElementById("stat-edges").textContent = edgesCount;
+    document.getElementById("stat-clusters").textContent = groups.size;
 }
 
 function addToNetworkGraph(ev, step = null) {
     if (!networkNodes || !networkEdges) return;
 
-    const nodeColors = {
-        ip: { background: '#ef4444', border: '#dc2626' },
-        domain: { background: '#f97316', border: '#ea580c' },
-        process: { background: '#3b82f6', border: '#2563eb' },
-        file: { background: '#22c55e', border: '#16a34a' },
-        hash: { background: '#eab308', border: '#ca8a04' },
-        malware: { background: '#dc2626', border: '#b91c1c' },
-        command: { background: '#a855f7', border: '#9333ea' },
-        registry: { background: '#06b6d4', border: '#0891b2' }
-    };
-
-    const nodeId = `${ev.type}-${ev.value}`;
-    const color = nodeColors[ev.type] || { background: '#6b7280', border: '#4b5563' };
-
-    // Add node if it doesn't exist
-    if (!networkNodes.get(nodeId)) {
-        networkNodes.add({
-            id: nodeId,
-            label: truncate(ev.value, 20),
-            title: `${ev.type.toUpperCase()}: ${ev.value}\nConfidence: ${(ev.confidence * 100).toFixed(0)}%`,
-            color: color,
-            group: ev.type
-        });
-    }
+    // Add the evidence node
+    const nodeId = addEvidenceNode(ev);
+    if (!nodeId) return;
 
     // Add edge from step's tool if available
     if (step) {
@@ -592,10 +895,22 @@ function addToNetworkGraph(ev, step = null) {
                 id: toolNodeId,
                 label: step.tool,
                 title: `Tool: ${step.tool}`,
-                color: { background: '#8b5cf6', border: '#7c3aed' },
-                shape: 'diamond',
-                size: 15
+                color: { background: "#10b981", border: "#059669" },
+                shape: "box",
+                size: 20,
+                font: { size: 11, color: "#f3f4f6" },
             });
+
+            // Connect to center if it exists
+            if (networkNodes.get("investigation-center")) {
+                networkEdges.add({
+                    from: "investigation-center",
+                    to: toolNodeId,
+                    color: { color: "#4b5563", opacity: 0.5 },
+                    width: 1,
+                    dashes: true,
+                });
+            }
         }
 
         const edgeId = `${toolNodeId}-${nodeId}`;
@@ -604,14 +919,15 @@ function addToNetworkGraph(ev, step = null) {
                 id: edgeId,
                 from: toolNodeId,
                 to: nodeId,
-                title: `Discovered by ${step.tool}`
+                title: `Discovered by ${step.tool}`,
+                color: { color: "#6b7280" },
+                width: 1,
             });
         }
     }
 
     // Update stats
-    document.getElementById('stat-nodes').textContent = networkNodes.length;
-    document.getElementById('stat-edges').textContent = networkEdges.length;
+    updateNetworkStats();
 }
 
 // ============================================================================
@@ -619,12 +935,12 @@ function addToNetworkGraph(ev, step = null) {
 // ============================================================================
 
 function initMitreMatrix() {
-    const matrixContainer = document.getElementById('mitre-matrix');
+    const matrixContainer = document.getElementById("mitre-matrix");
     if (!matrixContainer) return;
 
     let html = '<div class="matrix-grid">';
 
-    MITRE_TACTICS.forEach(tactic => {
+    MITRE_TACTICS.forEach((tactic) => {
         html += `
             <div class="matrix-column" data-tactic="${tactic.id}">
                 <div class="matrix-tactic-header" style="background-color: ${tactic.color}20; border-color: ${tactic.color}">
@@ -638,15 +954,15 @@ function initMitreMatrix() {
         `;
     });
 
-    html += '</div>';
+    html += "</div>";
     matrixContainer.innerHTML = html;
 
     // Pre-populate with known techniques (greyed out)
     Object.entries(MITRE_TECHNIQUES_DB).forEach(([techId, tech]) => {
         const container = document.getElementById(`matrix-tech-${tech.tactic}`);
         if (container) {
-            const techEl = document.createElement('div');
-            techEl.className = 'matrix-technique inactive';
+            const techEl = document.createElement("div");
+            techEl.className = "matrix-technique inactive";
             techEl.id = `tech-${techId}`;
             techEl.innerHTML = `<span class="tech-id">${techId}</span><span class="tech-name">${tech.name}</span>`;
             techEl.onclick = () => showMitreDetail(techId);
@@ -658,8 +974,8 @@ function initMitreMatrix() {
 function updateMitreMatrix(techId, tactic) {
     const techEl = document.getElementById(`tech-${techId}`);
     if (techEl) {
-        techEl.classList.remove('inactive');
-        techEl.classList.add('detected');
+        techEl.classList.remove("inactive");
+        techEl.classList.add("detected");
     }
 
     // Update coverage percentage
@@ -667,12 +983,16 @@ function updateMitreMatrix(techId, tactic) {
     const detectedTechs = Object.values(mitreTechniques).flat().length;
     const coverage = ((detectedTechs / totalTechs) * 100).toFixed(1);
 
-    document.getElementById('mitre-coverage-percent').textContent = `${coverage}%`;
-    document.getElementById('mitre-detected-count').textContent = detectedTechs;
+    document.getElementById("mitre-coverage-percent").textContent =
+        `${coverage}%`;
+    document.getElementById("mitre-detected-count").textContent = detectedTechs;
 
     // Update tactic counts
-    MITRE_TACTICS.forEach(t => {
-        const count = mitreTechniques[t.id]?.length || mitreTechniques[t.name]?.length || 0;
+    MITRE_TACTICS.forEach((t) => {
+        const count =
+            mitreTechniques[t.id]?.length ||
+            mitreTechniques[t.name]?.length ||
+            0;
         const countEl = document.getElementById(`tactic-count-${t.id}`);
         if (countEl) countEl.textContent = count;
     });
@@ -682,10 +1002,11 @@ function showMitreDetail(techId) {
     const tech = MITRE_TECHNIQUES_DB[techId];
     if (!tech) return;
 
-    const tactic = MITRE_TACTICS.find(t => t.id === tech.tactic);
+    const tactic = MITRE_TACTICS.find((t) => t.id === tech.tactic);
 
-    document.getElementById('mitre-modal-title').textContent = `${techId} - ${tech.name}`;
-    document.getElementById('mitre-modal-content').innerHTML = `
+    document.getElementById("mitre-modal-title").textContent =
+        `${techId} - ${tech.name}`;
+    document.getElementById("mitre-modal-content").innerHTML = `
         <div class="mitre-detail">
             <div class="mitre-detail-row">
                 <span class="detail-label">Technique ID:</span>
@@ -697,7 +1018,7 @@ function showMitreDetail(techId) {
             </div>
             <div class="mitre-detail-row">
                 <span class="detail-label">Tactic:</span>
-                <span class="detail-value" style="color: ${tactic?.color || '#fff'}">${tactic?.name || tech.tactic}</span>
+                <span class="detail-value" style="color: ${tactic?.color || "#fff"}">${tactic?.name || tech.tactic}</span>
             </div>
             <div class="mitre-detail-row">
                 <span class="detail-label">Description:</span>
@@ -705,8 +1026,8 @@ function showMitreDetail(techId) {
             </div>
             <div class="mitre-detail-row">
                 <span class="detail-label">Status:</span>
-                <span class="detail-value ${mitreTechniques[tech.tactic]?.includes(techId) ? 'detected' : 'not-detected'}">
-                    ${mitreTechniques[tech.tactic]?.includes(techId) ? '✓ Detected in this investigation' : 'Not detected'}
+                <span class="detail-value ${mitreTechniques[tech.tactic]?.includes(techId) ? "detected" : "not-detected"}">
+                    ${mitreTechniques[tech.tactic]?.includes(techId) ? "✓ Detected in this investigation" : "Not detected"}
                 </span>
             </div>
             <a href="https://attack.mitre.org/techniques/${techId}/" target="_blank" class="btn btn-secondary btn-sm">
@@ -715,7 +1036,7 @@ function showMitreDetail(techId) {
         </div>
     `;
 
-    mitreModal.classList.add('active');
+    mitreModal.classList.add("active");
 }
 
 // ============================================================================
@@ -724,95 +1045,120 @@ function showMitreDetail(techId) {
 
 function initCharts() {
     // Threat Score Over Time
-    const threatCtx = document.getElementById('threat-score-chart')?.getContext('2d');
+    const threatCtx = document
+        .getElementById("threat-score-chart")
+        ?.getContext("2d");
     if (threatCtx) {
         charts.threatScore = new Chart(threatCtx, {
-            type: 'line',
+            type: "line",
             data: {
                 labels: [],
-                datasets: [{
-                    label: 'Threat Score',
-                    data: [],
-                    borderColor: '#ef4444',
-                    backgroundColor: 'rgba(239, 68, 68, 0.1)',
-                    fill: true,
-                    tension: 0.4
-                }]
+                datasets: [
+                    {
+                        label: "Threat Score",
+                        data: [],
+                        borderColor: "#ef4444",
+                        backgroundColor: "rgba(239, 68, 68, 0.1)",
+                        fill: true,
+                        tension: 0.4,
+                    },
+                ],
             },
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
                 plugins: { legend: { display: false } },
                 scales: {
-                    y: { beginAtZero: true, max: 100, grid: { color: '#374151' } },
-                    x: { grid: { color: '#374151' } }
-                }
-            }
+                    y: {
+                        beginAtZero: true,
+                        max: 100,
+                        grid: { color: "#374151" },
+                    },
+                    x: { grid: { color: "#374151" } },
+                },
+            },
         });
     }
 
     // Evidence Distribution (Doughnut)
-    const evidenceCtx = document.getElementById('evidence-chart')?.getContext('2d');
+    const evidenceCtx = document
+        .getElementById("evidence-chart")
+        ?.getContext("2d");
     if (evidenceCtx) {
         charts.evidence = new Chart(evidenceCtx, {
-            type: 'doughnut',
+            type: "doughnut",
             data: {
                 labels: [],
-                datasets: [{
-                    data: [],
-                    backgroundColor: ['#ef4444', '#f97316', '#eab308', '#22c55e', '#3b82f6', '#a855f7', '#ec4899', '#06b6d4']
-                }]
+                datasets: [
+                    {
+                        data: [],
+                        backgroundColor: [
+                            "#ef4444",
+                            "#f97316",
+                            "#eab308",
+                            "#22c55e",
+                            "#3b82f6",
+                            "#a855f7",
+                            "#ec4899",
+                            "#06b6d4",
+                        ],
+                    },
+                ],
             },
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
                 plugins: {
-                    legend: { position: 'right', labels: { color: '#9ca3af' } }
-                }
-            }
+                    legend: { position: "right", labels: { color: "#9ca3af" } },
+                },
+            },
         });
     }
 
     // Tools Usage (Bar)
-    const toolsCtx = document.getElementById('tools-chart')?.getContext('2d');
+    const toolsCtx = document.getElementById("tools-chart")?.getContext("2d");
     if (toolsCtx) {
         charts.tools = new Chart(toolsCtx, {
-            type: 'bar',
+            type: "bar",
             data: {
                 labels: [],
-                datasets: [{
-                    label: 'Executions',
-                    data: [],
-                    backgroundColor: '#8b5cf6'
-                }]
+                datasets: [
+                    {
+                        label: "Executions",
+                        data: [],
+                        backgroundColor: "#8b5cf6",
+                    },
+                ],
             },
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
-                indexAxis: 'y',
+                indexAxis: "y",
                 plugins: { legend: { display: false } },
                 scales: {
-                    x: { beginAtZero: true, grid: { color: '#374151' } },
-                    y: { grid: { color: '#374151' } }
-                }
-            }
+                    x: { beginAtZero: true, grid: { color: "#374151" } },
+                    y: { grid: { color: "#374151" } },
+                },
+            },
         });
     }
 
     // MITRE Radar
-    const mitreCtx = document.getElementById('mitre-chart')?.getContext('2d');
+    const mitreCtx = document.getElementById("mitre-chart")?.getContext("2d");
     if (mitreCtx) {
         charts.mitre = new Chart(mitreCtx, {
-            type: 'radar',
+            type: "radar",
             data: {
-                labels: MITRE_TACTICS.slice(0, 8).map(t => t.name),
-                datasets: [{
-                    label: 'Techniques Detected',
-                    data: [0, 0, 0, 0, 0, 0, 0, 0],
-                    backgroundColor: 'rgba(0, 212, 255, 0.2)',
-                    borderColor: '#00d4ff',
-                    pointBackgroundColor: '#00d4ff'
-                }]
+                labels: MITRE_TACTICS.slice(0, 8).map((t) => t.name),
+                datasets: [
+                    {
+                        label: "Techniques Detected",
+                        data: [0, 0, 0, 0, 0, 0, 0, 0],
+                        backgroundColor: "rgba(0, 212, 255, 0.2)",
+                        borderColor: "#00d4ff",
+                        pointBackgroundColor: "#00d4ff",
+                    },
+                ],
             },
             options: {
                 responsive: true,
@@ -821,77 +1167,94 @@ function initCharts() {
                 scales: {
                     r: {
                         beginAtZero: true,
-                        grid: { color: '#374151' },
-                        pointLabels: { color: '#9ca3af', font: { size: 10 } }
-                    }
-                }
-            }
+                        grid: { color: "#374151" },
+                        pointLabels: { color: "#9ca3af", font: { size: 10 } },
+                    },
+                },
+            },
         });
     }
 
     // Severity Distribution (Polar)
-    const severityCtx = document.getElementById('severity-chart')?.getContext('2d');
+    const severityCtx = document
+        .getElementById("severity-chart")
+        ?.getContext("2d");
     if (severityCtx) {
         charts.severity = new Chart(severityCtx, {
-            type: 'polarArea',
+            type: "polarArea",
             data: {
-                labels: ['Critical', 'High', 'Medium', 'Low', 'Info'],
-                datasets: [{
-                    data: [0, 0, 0, 0, 0],
-                    backgroundColor: [
-                        'rgba(220, 38, 38, 0.8)',
-                        'rgba(249, 115, 22, 0.8)',
-                        'rgba(251, 191, 36, 0.8)',
-                        'rgba(16, 185, 129, 0.8)',
-                        'rgba(59, 130, 246, 0.8)'
-                    ]
-                }]
+                labels: ["Critical", "High", "Medium", "Low", "Info"],
+                datasets: [
+                    {
+                        data: [0, 0, 0, 0, 0],
+                        backgroundColor: [
+                            "rgba(220, 38, 38, 0.8)",
+                            "rgba(249, 115, 22, 0.8)",
+                            "rgba(251, 191, 36, 0.8)",
+                            "rgba(16, 185, 129, 0.8)",
+                            "rgba(59, 130, 246, 0.8)",
+                        ],
+                    },
+                ],
             },
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
-                plugins: { legend: { position: 'right', labels: { color: '#9ca3af' } } },
-                scales: { r: { grid: { color: '#374151' } } }
-            }
+                plugins: {
+                    legend: { position: "right", labels: { color: "#9ca3af" } },
+                },
+                scales: { r: { grid: { color: "#374151" } } },
+            },
         });
     }
 
     // Analysis Timeline
-    const timelineCtx = document.getElementById('timeline-chart')?.getContext('2d');
+    const timelineCtx = document
+        .getElementById("timeline-chart")
+        ?.getContext("2d");
     if (timelineCtx) {
         charts.timeline = new Chart(timelineCtx, {
-            type: 'line',
+            type: "line",
             data: {
                 labels: [],
                 datasets: [
                     {
-                        label: 'Progress',
+                        label: "Progress",
                         data: [],
-                        borderColor: '#00d4ff',
-                        backgroundColor: 'rgba(0, 212, 255, 0.1)',
+                        borderColor: "#00d4ff",
+                        backgroundColor: "rgba(0, 212, 255, 0.1)",
                         fill: true,
-                        yAxisID: 'y'
+                        yAxisID: "y",
                     },
                     {
-                        label: 'Evidence Found',
+                        label: "Evidence Found",
                         data: [],
-                        borderColor: '#22c55e',
-                        backgroundColor: 'transparent',
-                        type: 'bar',
-                        yAxisID: 'y1'
-                    }
-                ]
+                        borderColor: "#22c55e",
+                        backgroundColor: "transparent",
+                        type: "bar",
+                        yAxisID: "y1",
+                    },
+                ],
             },
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
-                plugins: { legend: { labels: { color: '#9ca3af' } } },
+                plugins: { legend: { labels: { color: "#9ca3af" } } },
                 scales: {
-                    y: { type: 'linear', position: 'left', max: 100, grid: { color: '#374151' } },
-                    y1: { type: 'linear', position: 'right', grid: { drawOnChartArea: false } },
-                    x: { grid: { color: '#374151' } }
-                }
-            }
+                    y: {
+                        type: "linear",
+                        position: "left",
+                        max: 100,
+                        grid: { color: "#374151" },
+                    },
+                    y1: {
+                        type: "linear",
+                        position: "right",
+                        grid: { drawOnChartArea: false },
+                    },
+                    x: { grid: { color: "#374151" } },
+                },
+            },
         });
     }
 }
@@ -900,7 +1263,10 @@ function updateThreatScoreChart(ev) {
     if (!charts.threatScore) return;
 
     const score = (ev.threat_score || ev.confidence) * 100;
-    const time = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+    const time = new Date().toLocaleTimeString("en-US", {
+        hour: "2-digit",
+        minute: "2-digit",
+    });
 
     charts.threatScore.data.labels.push(time);
     charts.threatScore.data.datasets[0].data.push(score);
@@ -911,45 +1277,51 @@ function updateThreatScoreChart(ev) {
         charts.threatScore.data.datasets[0].data.shift();
     }
 
-    charts.threatScore.update('none');
+    charts.threatScore.update("none");
 }
 
 function updateEvidenceChart() {
     if (!charts.evidence) return;
 
     const typeCounts = {};
-    evidence.forEach(ev => {
+    evidence.forEach((ev) => {
         typeCounts[ev.type] = (typeCounts[ev.type] || 0) + 1;
     });
 
     charts.evidence.data.labels = Object.keys(typeCounts);
     charts.evidence.data.datasets[0].data = Object.values(typeCounts);
-    charts.evidence.update('none');
+    charts.evidence.update("none");
 }
 
 function updateToolsChart() {
     if (!charts.tools) return;
 
     const toolCounts = {};
-    steps.forEach(step => {
+    steps.forEach((step) => {
         toolCounts[step.tool] = (toolCounts[step.tool] || 0) + 1;
     });
 
-    const sorted = Object.entries(toolCounts).sort((a, b) => b[1] - a[1]).slice(0, 10);
+    const sorted = Object.entries(toolCounts)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 10);
     charts.tools.data.labels = sorted.map(([name]) => name);
     charts.tools.data.datasets[0].data = sorted.map(([, count]) => count);
-    charts.tools.update('none');
+    charts.tools.update("none");
 }
 
 function updateMitreChart() {
     if (!charts.mitre) return;
 
-    const tacticCounts = MITRE_TACTICS.slice(0, 8).map(t => {
-        return mitreTechniques[t.id]?.length || mitreTechniques[t.name]?.length || 0;
+    const tacticCounts = MITRE_TACTICS.slice(0, 8).map((t) => {
+        return (
+            mitreTechniques[t.id]?.length ||
+            mitreTechniques[t.name]?.length ||
+            0
+        );
     });
 
     charts.mitre.data.datasets[0].data = tacticCounts;
-    charts.mitre.update('none');
+    charts.mitre.update("none");
 }
 
 function updateSeverityChart(event) {
@@ -958,13 +1330,16 @@ function updateSeverityChart(event) {
     const severityMap = { critical: 0, high: 1, medium: 2, low: 3, info: 4 };
     const idx = severityMap[event.severity?.toLowerCase()] ?? 4;
     charts.severity.data.datasets[0].data[idx]++;
-    charts.severity.update('none');
+    charts.severity.update("none");
 }
 
 function updateTimelineChart(data) {
     if (!charts.timeline) return;
 
-    const time = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+    const time = new Date().toLocaleTimeString("en-US", {
+        hour: "2-digit",
+        minute: "2-digit",
+    });
 
     charts.timeline.data.labels.push(time);
     charts.timeline.data.datasets[0].data.push(data.progress);
@@ -976,7 +1351,7 @@ function updateTimelineChart(data) {
         charts.timeline.data.datasets[1].data.shift();
     }
 
-    charts.timeline.update('none');
+    charts.timeline.update("none");
 }
 
 function updateAllCharts() {
@@ -997,16 +1372,18 @@ function sendChatMessage() {
 
     // Send to backend for LLM processing
     if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({
-            type: "llm_query",
-            message: message,
-            context: {
-                evidence: evidence.slice(-10),
-                steps: steps.slice(-5),
-                mitre: mitreTechniques,
-                hypotheses: hypotheses
-            }
-        }));
+        ws.send(
+            JSON.stringify({
+                type: "llm_query",
+                message: message,
+                context: {
+                    evidence: evidence.slice(-10),
+                    steps: steps.slice(-5),
+                    mitre: mitreTechniques,
+                    hypotheses: hypotheses,
+                },
+            }),
+        );
     } else {
         // Fallback: simulate LLM response for demo
         simulateLLMResponse(message);
@@ -1020,13 +1397,16 @@ function simulateLLMResponse(query) {
     let response = "";
 
     if (lowerQuery.includes("process") && lowerQuery.includes("ip")) {
-        const processes = evidence.filter(e => e.type === 'process');
-        const ips = evidence.filter(e => e.type === 'ip');
+        const processes = evidence.filter((e) => e.type === "process");
+        const ips = evidence.filter((e) => e.type === "ip");
         response = `Based on the analysis, I found ${processes.length} suspicious processes and ${ips.length} external IP connections.\n\n`;
         if (ips.length > 0) {
-            response += `External IPs detected:\n${ips.map(ip => `• ${ip.value} (${(ip.confidence * 100).toFixed(0)}% confidence)`).join('\n')}`;
+            response += `External IPs detected:\n${ips.map((ip) => `• ${ip.value} (${(ip.confidence * 100).toFixed(0)}% confidence)`).join("\n")}`;
         }
-    } else if (lowerQuery.includes("malicious") || lowerQuery.includes("summary")) {
+    } else if (
+        lowerQuery.includes("malicious") ||
+        lowerQuery.includes("summary")
+    ) {
         response = `**Investigation Summary**\n\n`;
         response += `• ${steps.length} analysis steps completed\n`;
         response += `• ${evidence.length} evidence items collected\n`;
@@ -1036,18 +1416,24 @@ function simulateLLMResponse(query) {
             response += `Top hypothesis: ${hypotheses[0].title} (${(hypotheses[0].confidence * 100).toFixed(0)}% confidence)`;
         }
     } else if (lowerQuery.includes("persistence")) {
-        const persistenceTechs = mitreTechniques['Persistence'] || mitreTechniques['persistence'] || [];
+        const persistenceTechs =
+            mitreTechniques["Persistence"] ||
+            mitreTechniques["persistence"] ||
+            [];
         response = `Found ${persistenceTechs.length} persistence techniques:\n`;
         if (persistenceTechs.length > 0) {
-            response += persistenceTechs.map(t => `• ${t}`).join('\n');
+            response += persistenceTechs.map((t) => `• ${t}`).join("\n");
         } else {
             response += "No persistence mechanisms detected yet.";
         }
     } else if (lowerQuery.includes("credential")) {
-        const credTechs = mitreTechniques['Credential Access'] || mitreTechniques['credential-access'] || [];
+        const credTechs =
+            mitreTechniques["Credential Access"] ||
+            mitreTechniques["credential-access"] ||
+            [];
         response = `Credential theft indicators:\n`;
         if (credTechs.length > 0) {
-            response += credTechs.map(t => `• ${t}`).join('\n');
+            response += credTechs.map((t) => `• ${t}`).join("\n");
         } else {
             response += "No credential theft indicators detected.";
         }
@@ -1057,22 +1443,27 @@ function simulateLLMResponse(query) {
         response += `\nYou can ask me specific questions about:\n• Processes and network connections\n• Malicious activity summary\n• Persistence mechanisms\n• Credential theft indicators`;
     }
 
-    setTimeout(() => {
-        addChatMessage("agent", response, true);
-    }, 500 + Math.random() * 1000);
+    setTimeout(
+        () => {
+            addChatMessage("agent", response, true);
+        },
+        500 + Math.random() * 1000,
+    );
 }
 
 function addChatMessage(type, text, isFormatted = false) {
     const messageEl = document.createElement("div");
     messageEl.className = `chat-message ${type}`;
 
-    if (type === 'agent' || type === 'system') {
+    if (type === "agent" || type === "system") {
         messageEl.innerHTML = `
-            <div class="chat-avatar ${type === 'agent' ? 'ai' : ''}">
+            <div class="chat-avatar ${type === "agent" ? "ai" : ""}">
                 <svg viewBox="0 0 24 24" fill="currentColor">
-                    ${type === 'agent'
-                        ? '<path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/>'
-                        : '<path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/>'}
+                    ${
+                        type === "agent"
+                            ? '<path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/>'
+                            : '<path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/>'
+                    }
                 </svg>
             </div>
             <div class="chat-content">
@@ -1089,9 +1480,9 @@ function addChatMessage(type, text, isFormatted = false) {
 
 function formatMarkdown(text) {
     return text
-        .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-        .replace(/\n/g, '<br>')
-        .replace(/• /g, '<br>• ');
+        .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
+        .replace(/\n/g, "<br>")
+        .replace(/• /g, "<br>• ");
 }
 
 function askQuestion(question) {
@@ -1113,21 +1504,25 @@ async function generatePDFReport() {
     // Title
     doc.setFontSize(24);
     doc.setTextColor(0, 212, 255);
-    doc.text('Forensic Investigation Report', pageWidth / 2, y, { align: 'center' });
+    doc.text("Forensic Investigation Report", pageWidth / 2, y, {
+        align: "center",
+    });
     y += 15;
 
     // Session Info
     doc.setFontSize(12);
     doc.setTextColor(150, 150, 150);
-    doc.text(`Session ID: ${sessionId}`, pageWidth / 2, y, { align: 'center' });
+    doc.text(`Session ID: ${sessionId}`, pageWidth / 2, y, { align: "center" });
     y += 5;
-    doc.text(`Generated: ${new Date().toLocaleString()}`, pageWidth / 2, y, { align: 'center' });
+    doc.text(`Generated: ${new Date().toLocaleString()}`, pageWidth / 2, y, {
+        align: "center",
+    });
     y += 20;
 
     // Executive Summary
     doc.setFontSize(16);
     doc.setTextColor(0, 0, 0);
-    doc.text('Executive Summary', 20, y);
+    doc.text("Executive Summary", 20, y);
     y += 10;
 
     doc.setFontSize(11);
@@ -1136,9 +1531,9 @@ async function generatePDFReport() {
         `Evidence Items Collected: ${evidence.length}`,
         `MITRE ATT&CK Techniques: ${Object.values(mitreTechniques).flat().length}`,
         `Attack Hypotheses Generated: ${hypotheses.length}`,
-        `Timeline Events: ${timeline.length}`
+        `Timeline Events: ${timeline.length}`,
     ];
-    summaryText.forEach(line => {
+    summaryText.forEach((line) => {
         doc.text(line, 25, y);
         y += 7;
     });
@@ -1147,24 +1542,30 @@ async function generatePDFReport() {
     // Evidence Summary
     if (evidence.length > 0) {
         doc.setFontSize(16);
-        doc.text('Evidence Summary', 20, y);
+        doc.text("Evidence Summary", 20, y);
         y += 10;
 
         doc.setFontSize(10);
         const evidenceByType = {};
-        evidence.forEach(ev => {
+        evidence.forEach((ev) => {
             if (!evidenceByType[ev.type]) evidenceByType[ev.type] = [];
             evidenceByType[ev.type].push(ev);
         });
 
         Object.entries(evidenceByType).forEach(([type, items]) => {
-            if (y > 270) { doc.addPage(); y = 20; }
+            if (y > 270) {
+                doc.addPage();
+                y = 20;
+            }
             doc.setTextColor(100, 100, 100);
             doc.text(`${type.toUpperCase()} (${items.length}):`, 25, y);
             y += 6;
             doc.setTextColor(0, 0, 0);
-            items.slice(0, 5).forEach(item => {
-                if (y > 270) { doc.addPage(); y = 20; }
+            items.slice(0, 5).forEach((item) => {
+                if (y > 270) {
+                    doc.addPage();
+                    y = 20;
+                }
                 const text = `• ${item.value.substring(0, 60)} (${(item.confidence * 100).toFixed(0)}% confidence)`;
                 doc.text(text, 30, y);
                 y += 5;
@@ -1179,35 +1580,51 @@ async function generatePDFReport() {
 
     // MITRE ATT&CK Coverage
     if (Object.keys(mitreTechniques).length > 0) {
-        if (y > 220) { doc.addPage(); y = 20; }
+        if (y > 220) {
+            doc.addPage();
+            y = 20;
+        }
         doc.setFontSize(16);
-        doc.text('MITRE ATT&CK Coverage', 20, y);
+        doc.text("MITRE ATT&CK Coverage", 20, y);
         y += 10;
 
         doc.setFontSize(10);
         Object.entries(mitreTechniques).forEach(([tactic, techs]) => {
-            if (y > 270) { doc.addPage(); y = 20; }
+            if (y > 270) {
+                doc.addPage();
+                y = 20;
+            }
             doc.setTextColor(100, 100, 100);
             doc.text(`${tactic}:`, 25, y);
             y += 6;
             doc.setTextColor(0, 0, 0);
-            doc.text(techs.join(', '), 30, y);
+            doc.text(techs.join(", "), 30, y);
             y += 8;
         });
     }
 
     // Hypotheses
     if (hypotheses.length > 0) {
-        if (y > 220) { doc.addPage(); y = 20; }
+        if (y > 220) {
+            doc.addPage();
+            y = 20;
+        }
         doc.setFontSize(16);
-        doc.text('Attack Hypotheses', 20, y);
+        doc.text("Attack Hypotheses", 20, y);
         y += 10;
 
         doc.setFontSize(10);
         hypotheses.forEach((hyp, idx) => {
-            if (y > 260) { doc.addPage(); y = 20; }
+            if (y > 260) {
+                doc.addPage();
+                y = 20;
+            }
             doc.setTextColor(0, 0, 0);
-            doc.text(`${idx + 1}. ${hyp.title} (${(hyp.confidence * 100).toFixed(0)}% confidence)`, 25, y);
+            doc.text(
+                `${idx + 1}. ${hyp.title} (${(hyp.confidence * 100).toFixed(0)}% confidence)`,
+                25,
+                y,
+            );
             y += 6;
             if (hyp.threat_actor) {
                 doc.setTextColor(100, 100, 100);
@@ -1225,7 +1642,12 @@ async function generatePDFReport() {
     // Footer on last page
     doc.setFontSize(8);
     doc.setTextColor(150, 150, 150);
-    doc.text('Generated by Autonomous Forensic Orchestrator', pageWidth / 2, 285, { align: 'center' });
+    doc.text(
+        "Generated by Autonomous Forensic Orchestrator",
+        pageWidth / 2,
+        285,
+        { align: "center" },
+    );
 
     // Save
     doc.save(`forensic_report_${sessionId}.pdf`);
@@ -1243,9 +1665,15 @@ function setupEventListeners() {
     });
 
     // Modals
-    closeSummaryModal?.addEventListener("click", () => summaryModal.classList.remove("active"));
-    closeStepModal?.addEventListener("click", () => stepModal.classList.remove("active"));
-    closeMitreModal?.addEventListener("click", () => mitreModal.classList.remove("active"));
+    closeSummaryModal?.addEventListener("click", () =>
+        summaryModal.classList.remove("active"),
+    );
+    closeStepModal?.addEventListener("click", () =>
+        stepModal.classList.remove("active"),
+    );
+    closeMitreModal?.addEventListener("click", () =>
+        mitreModal.classList.remove("active"),
+    );
 
     summaryModal?.addEventListener("click", (e) => {
         if (e.target === summaryModal) summaryModal.classList.remove("active");
@@ -1262,16 +1690,17 @@ function setupEventListeners() {
     downloadJson?.addEventListener("click", () => downloadReport("json"));
     downloadHtml?.addEventListener("click", () => downloadReport("html"));
     downloadStix?.addEventListener("click", () => downloadReport("stix"));
-    btnExport?.addEventListener("click", () => summaryModal.classList.add("active"));
+    btnExport?.addEventListener("click", () =>
+        summaryModal.classList.add("active"),
+    );
 
-    // Keyboard
-    document.addEventListener("keydown", (e) => {
-        if (e.key === "Escape") {
-            summaryModal.classList.remove("active");
-            stepModal.classList.remove("active");
-            mitreModal.classList.remove("active");
-        }
-    });
+    // Fullscreen and Sound buttons
+    document
+        .getElementById("btn-fullscreen")
+        ?.addEventListener("click", toggleFullscreen);
+    document
+        .getElementById("btn-sound")
+        ?.addEventListener("click", toggleSound);
 }
 
 // ============================================================================
@@ -1280,8 +1709,11 @@ function setupEventListeners() {
 
 async function downloadReport(format) {
     try {
-        const response = await fetch(`${API_BASE}/report/${sessionId}?format=${format}`);
-        if (!response.ok) throw new Error(`Failed to get report: ${response.statusText}`);
+        const response = await fetch(
+            `${API_BASE}/report/${sessionId}?format=${format}`,
+        );
+        if (!response.ok)
+            throw new Error(`Failed to get report: ${response.statusText}`);
 
         let blob, filename;
 
@@ -1291,8 +1723,13 @@ async function downloadReport(format) {
             filename = `report_${sessionId}.html`;
         } else {
             const data = await response.json();
-            blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
-            filename = format === "stix" ? `stix_bundle_${sessionId}.json` : `report_${sessionId}.json`;
+            blob = new Blob([JSON.stringify(data, null, 2)], {
+                type: "application/json",
+            });
+            filename =
+                format === "stix"
+                    ? `stix_bundle_${sessionId}.json`
+                    : `report_${sessionId}.json`;
         }
 
         const url = URL.createObjectURL(blob);
@@ -1344,9 +1781,11 @@ function showStepDetail(step) {
 
         <div class="step-detail-section">
             <h3>Evidence Extracted (${step.evidence?.length || 0})</h3>
-            ${step.evidence?.length > 0
-                ? `<ul>${step.evidence.map(e => `<li><strong>${e.type}:</strong> ${e.value} (${(e.confidence * 100).toFixed(0)}% confidence)</li>`).join("")}</ul>`
-                : "<p>No evidence extracted</p>"}
+            ${
+                step.evidence?.length > 0
+                    ? `<ul>${step.evidence.map((e) => `<li><strong>${e.type}:</strong> ${e.value} (${(e.confidence * 100).toFixed(0)}% confidence)</li>`).join("")}</ul>`
+                    : "<p>No evidence extracted</p>"
+            }
         </div>
 
         <div class="step-detail-section">
@@ -1359,8 +1798,496 @@ function showStepDetail(step) {
 }
 
 // ============================================================================
+// Keyboard Shortcuts
+// ============================================================================
+
+function setupKeyboardShortcuts() {
+    document.addEventListener("keydown", (e) => {
+        // Ignore if typing in input field
+        if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") {
+            return;
+        }
+
+        switch (e.key) {
+            case "1":
+                switchView("main");
+                updateViewButtons("main");
+                break;
+            case "2":
+                switchView("network");
+                updateViewButtons("network");
+                break;
+            case "3":
+                switchView("mitre");
+                updateViewButtons("mitre");
+                break;
+            case "4":
+                switchView("charts");
+                updateViewButtons("charts");
+                break;
+            case "f":
+            case "F":
+                toggleFullscreen();
+                break;
+            case "s":
+            case "S":
+                toggleSound();
+                break;
+            case "e":
+            case "E":
+                if (!e.ctrlKey && !e.metaKey) {
+                    summaryModal.classList.add("active");
+                }
+                break;
+            case "Escape":
+                summaryModal.classList.remove("active");
+                stepModal.classList.remove("active");
+                mitreModal.classList.remove("active");
+                if (isFullscreen) toggleFullscreen();
+                break;
+        }
+    });
+}
+
+function updateViewButtons(viewId) {
+    document.querySelectorAll(".view-btn").forEach((btn) => {
+        btn.classList.remove("active");
+        if (btn.dataset.view === viewId) {
+            btn.classList.add("active");
+        }
+    });
+}
+
+// ============================================================================
+// Sound Effects
+// ============================================================================
+
+function initAudioContext() {
+    try {
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    } catch (e) {
+        console.warn("Audio not supported:", e);
+        soundEnabled = false;
+    }
+}
+
+function playSound(type) {
+    if (!soundEnabled || !audioContext) return;
+
+    const oscillator = audioContext.createOscillator();
+    const gainNode = audioContext.createGain();
+
+    oscillator.connect(gainNode);
+    gainNode.connect(audioContext.destination);
+
+    // Different sounds for different events
+    switch (type) {
+        case "evidence":
+            oscillator.frequency.value = 800;
+            gainNode.gain.value = 0.1;
+            break;
+        case "step":
+            oscillator.frequency.value = 600;
+            gainNode.gain.value = 0.08;
+            break;
+        case "alert":
+            oscillator.frequency.value = 1000;
+            gainNode.gain.value = 0.15;
+            break;
+        case "complete":
+            oscillator.frequency.value = 400;
+            gainNode.gain.value = 0.12;
+            break;
+    }
+
+    oscillator.start(audioContext.currentTime);
+    oscillator.stop(audioContext.currentTime + 0.1);
+}
+
+function toggleSound() {
+    soundEnabled = !soundEnabled;
+    const soundIcon = document.getElementById("sound-icon");
+    if (soundIcon) {
+        if (soundEnabled) {
+            soundIcon.innerHTML =
+                '<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/>';
+        } else {
+            soundIcon.innerHTML =
+                '<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/>';
+        }
+    }
+    playSound("alert");
+}
+
+// ============================================================================
+// Fullscreen Mode
+// ============================================================================
+
+function toggleFullscreen() {
+    if (!document.fullscreenElement) {
+        document.documentElement
+            .requestFullscreen()
+            .then(() => {
+                isFullscreen = true;
+            })
+            .catch((err) => {
+                console.error("Fullscreen error:", err);
+            });
+    } else {
+        document.exitFullscreen().then(() => {
+            isFullscreen = false;
+        });
+    }
+}
+
+// ============================================================================
+// Evidence Filters and Search
+// ============================================================================
+
+function setupEvidenceFilters() {
+    const searchInput = document.getElementById("evidence-search");
+    const filterButtons = document.querySelectorAll(".filter-btn");
+
+    if (searchInput) {
+        searchInput.addEventListener("input", (e) => {
+            searchTerm = e.target.value.toLowerCase();
+            filterEvidence();
+        });
+    }
+
+    filterButtons.forEach((btn) => {
+        btn.addEventListener("click", () => {
+            filterButtons.forEach((b) => b.classList.remove("active"));
+            btn.classList.add("active");
+            currentFilter = btn.dataset.filter;
+            filterEvidence();
+        });
+    });
+}
+
+function filterEvidence() {
+    const cards = evidenceGrid.querySelectorAll(".evidence-card");
+    let visibleCount = 0;
+
+    cards.forEach((card) => {
+        const type = card.className.split("type-")[1]?.split(" ")[0];
+        const value =
+            card.querySelector(".evidence-value")?.textContent.toLowerCase() ||
+            "";
+
+        const matchesFilter = currentFilter === "all" || type === currentFilter;
+        const matchesSearch = !searchTerm || value.includes(searchTerm);
+
+        if (matchesFilter && matchesSearch) {
+            card.style.display = "block";
+            visibleCount++;
+        } else {
+            card.style.display = "none";
+        }
+    });
+
+    // Update count
+    evidenceCount.textContent = visibleCount;
+}
+
+// ============================================================================
+// Breadcrumb Navigation
+// ============================================================================
+
+function updateBreadcrumb(phase, progress) {
+    const currentPhase = INVESTIGATION_PHASES.find(
+        (p) =>
+            progress >= p.progress &&
+            progress <
+                (INVESTIGATION_PHASES[INVESTIGATION_PHASES.indexOf(p) + 1]
+                    ?.progress || 100),
+    );
+
+    if (!currentPhase) return;
+
+    const breadcrumbPhase = document.getElementById("breadcrumb-phase");
+    const breadcrumbNext = document.getElementById("breadcrumb-next");
+
+    if (breadcrumbPhase) breadcrumbPhase.textContent = currentPhase.name;
+
+    const currentIndex = INVESTIGATION_PHASES.indexOf(currentPhase);
+    if (currentIndex < INVESTIGATION_PHASES.length - 1) {
+        const nextPhase = INVESTIGATION_PHASES[currentIndex + 1];
+        if (breadcrumbNext) breadcrumbNext.textContent = nextPhase.name;
+    } else {
+        if (breadcrumbNext) breadcrumbNext.textContent = "Complete";
+    }
+}
+
+// ============================================================================
+// Network Graph Search and Controls
+// ============================================================================
+
+function setupNetworkSearchAndControls() {
+    const networkSearch = document.getElementById("network-search");
+    const clusterBtn = document.getElementById("network-cluster");
+    const exportBtn = document.getElementById("network-export");
+
+    if (networkSearch) {
+        networkSearch.addEventListener("input", (e) => {
+            searchNetworkNodes(e.target.value);
+        });
+    }
+
+    if (clusterBtn) {
+        clusterBtn.addEventListener("click", toggleNodeClustering);
+    }
+
+    if (exportBtn) {
+        exportBtn.addEventListener("click", exportNetworkAsPNG);
+    }
+}
+
+function searchNetworkNodes(query) {
+    if (!networkGraph || !networkNodes) return;
+
+    const lowerQuery = query.toLowerCase();
+
+    if (!query) {
+        // Reset all nodes
+        networkNodes.forEach((node) => {
+            networkNodes.update({
+                id: node.id,
+                color: node.color,
+                borderWidth: 2,
+            });
+        });
+        return;
+    }
+
+    // Highlight matching nodes
+    networkNodes.forEach((node) => {
+        const matches =
+            node.label?.toLowerCase().includes(lowerQuery) ||
+            node.id?.toLowerCase().includes(lowerQuery);
+
+        if (matches) {
+            networkNodes.update({
+                id: node.id,
+                borderWidth: 5,
+                color: {
+                    ...node.color,
+                    border: "#00d4ff",
+                },
+            });
+
+            // Focus on the node
+            networkGraph.focus(node.id, {
+                scale: 1.5,
+                animation: {
+                    duration: 500,
+                    easingFunction: "easeInOutQuad",
+                },
+            });
+        } else {
+            networkNodes.update({
+                id: node.id,
+                borderWidth: 2,
+                color: node.color,
+            });
+        }
+    });
+}
+
+let clusteringEnabled = false;
+
+function toggleNodeClustering() {
+    if (!networkGraph) return;
+
+    clusteringEnabled = !clusteringEnabled;
+
+    if (clusteringEnabled) {
+        // Enable clustering by group
+        const clusterOptions = {
+            joinCondition: function (nodeOptions) {
+                return nodeOptions.group !== undefined;
+            },
+            clusterNodeProperties: {
+                borderWidth: 3,
+                shape: "database",
+                font: { size: 14 },
+            },
+        };
+
+        // Cluster by evidence type
+        const groups = [
+            "ip",
+            "domain",
+            "process",
+            "file",
+            "hash",
+            "malware",
+            "command",
+            "registry",
+        ];
+        groups.forEach((group) => {
+            networkGraph.cluster({
+                joinCondition: function (node) {
+                    return node.group === group;
+                },
+                clusterNodeProperties: {
+                    id: `cluster-${group}`,
+                    label: `${group.toUpperCase()} (${networkNodes.get({ filter: (n) => n.group === group }).length})`,
+                    shape: "dot",
+                    size: 40,
+                    color: getClusterColor(group),
+                },
+            });
+        });
+
+        playSound("alert");
+    } else {
+        // Disable clustering
+        networkGraph.setData({ nodes: networkNodes, edges: networkEdges });
+        playSound("alert");
+    }
+}
+
+function getClusterColor(group) {
+    const colors = {
+        ip: "#ef4444",
+        domain: "#f97316",
+        process: "#3b82f6",
+        file: "#22c55e",
+        hash: "#eab308",
+        malware: "#dc2626",
+        command: "#a855f7",
+        registry: "#06b6d4",
+    };
+    return colors[group] || "#6b7280";
+}
+
+function exportNetworkAsPNG() {
+    if (!networkGraph) return;
+
+    const canvas = document.querySelector("#network-graph canvas");
+    if (!canvas) return;
+
+    canvas.toBlob((blob) => {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `network_graph_${sessionId}_${Date.now()}.png`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    });
+
+    playSound("complete");
+}
+
+// ============================================================================
 // Utility Functions
 // ============================================================================
+
+function copyToClipboard(text, event) {
+    event.stopPropagation();
+
+    navigator.clipboard
+        .writeText(text)
+        .then(() => {
+            // Visual feedback
+            const btn = event.currentTarget;
+            const originalHTML = btn.innerHTML;
+            btn.innerHTML =
+                '<svg viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2" width="14" height="14"><polyline points="20 6 9 17 4 12"></polyline></svg>';
+            btn.style.color = "#10b981";
+
+            setTimeout(() => {
+                btn.innerHTML = originalHTML;
+                btn.style.color = "";
+            }, 1000);
+
+            playSound("alert");
+        })
+        .catch((err) => {
+            console.error("Copy failed:", err);
+            alert("Failed to copy to clipboard");
+        });
+}
+
+function handleStep(step) {
+    steps.push(step);
+    stepsCount.textContent = steps.length;
+
+    // Remove empty state if present
+    const emptyState = stepsFeed.querySelector(".empty-state");
+    if (emptyState) emptyState.remove();
+
+    // Create step card
+    const stepCard = document.createElement("div");
+    stepCard.className = "step-card";
+    stepCard.innerHTML = `
+        <div class="step-header">
+            <span class="step-number">${step.step_number}</span>
+            <span class="step-tool">${step.tool}</span>
+            <span class="step-phase">${step.phase}</span>
+        </div>
+        <p class="step-thought">${truncate(step.thought, 150)}</p>
+        <p class="step-action">${truncate(step.action, 100)}</p>
+        <p class="step-evidence-count">${step.evidence?.length || 0} evidence items extracted</p>
+    `;
+
+    stepCard.addEventListener("click", () => showStepDetail(step));
+    stepsFeed.appendChild(stepCard);
+    stepsFeed.scrollTop = stepsFeed.scrollHeight;
+
+    // Play sound
+    playSound("step");
+
+    // Update network graph
+    if (step.evidence) {
+        step.evidence.forEach((ev) => addToNetworkGraph(ev, step));
+    }
+
+    // Update charts
+    updateToolsChart();
+}
+
+function handleComplete(data) {
+    progressPhase.textContent = "Investigation Complete";
+    progressPercent.textContent = "100%";
+    progressFill.style.width = "100%";
+
+    // Update breadcrumb
+    updateBreadcrumb("complete", 100);
+
+    // Play completion sound
+    playSound("complete");
+
+    summaryContent.innerHTML = `
+        <div class="summary-stats">
+            <div class="summary-stat">
+                <span class="stat-value">${steps.length}</span>
+                <span class="stat-label">Analysis Steps</span>
+            </div>
+            <div class="summary-stat">
+                <span class="stat-value">${evidence.length}</span>
+                <span class="stat-label">Evidence Items</span>
+            </div>
+            <div class="summary-stat">
+                <span class="stat-value">${Object.values(mitreTechniques).flat().length}</span>
+                <span class="stat-label">MITRE Techniques</span>
+            </div>
+            <div class="summary-stat">
+                <span class="stat-value">${hypotheses.length}</span>
+                <span class="stat-label">Hypotheses</span>
+            </div>
+        </div>
+        <h3>Executive Summary</h3>
+        <pre class="summary-text">${data.summary}</pre>
+        <h3>Conclusion</h3>
+        <p class="conclusion-text">${data.conclusion}</p>
+    `;
+
+    summaryModal.classList.add("active");
+}
 
 function truncate(text, maxLength) {
     if (!text) return "";
@@ -1389,3 +2316,4 @@ function formatTime(timestamp) {
 // Global functions for onclick handlers
 window.askQuestion = askQuestion;
 window.showMitreDetail = showMitreDetail;
+window.copyToClipboard = copyToClipboard;

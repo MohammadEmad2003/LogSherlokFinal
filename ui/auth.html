@@ -1,0 +1,511 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>LogSherlock - Sign In</title>
+        <link rel="stylesheet" href="styles.css" />
+        <link
+            href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap"
+            rel="stylesheet"
+        />
+    </head>
+    <body class="auth-body">
+        <div class="auth-container">
+            <!-- Logo Section -->
+            <div class="auth-logo">
+                <div class="logo-icon-large">
+                    <svg
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.5"
+                    >
+                        <circle cx="11" cy="11" r="8" />
+                        <path d="m21 21-4.35-4.35" />
+                        <path d="M11 8v6M8 11h6" />
+                    </svg>
+                </div>
+                <h1 class="logo-title">LogSherlock</h1>
+                <p class="logo-tagline">Autonomous Forensic Intelligence</p>
+            </div>
+
+            <!-- Auth Forms Container -->
+            <div class="auth-forms">
+                <!-- Login Form -->
+                <div class="auth-form active" id="login-form">
+                    <div class="form-header">
+                        <h2>Welcome Back</h2>
+                        <p>Sign in to continue your investigation</p>
+                    </div>
+                    <form id="login-form-el">
+                        <div class="form-group">
+                            <label for="login-email">Email</label>
+                            <div class="input-wrapper">
+                                <svg
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="2"
+                                >
+                                    <path
+                                        d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"
+                                    />
+                                    <polyline points="22,6 12,13 2,6" />
+                                </svg>
+                                <input
+                                    type="email"
+                                    id="login-email"
+                                    placeholder="Enter your email"
+                                    required
+                                />
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label for="login-password">Password</label>
+                            <div class="input-wrapper">
+                                <svg
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="2"
+                                >
+                                    <rect
+                                        x="3"
+                                        y="11"
+                                        width="18"
+                                        height="11"
+                                        rx="2"
+                                        ry="2"
+                                    />
+                                    <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                                </svg>
+                                <input
+                                    type="password"
+                                    id="login-password"
+                                    placeholder="Enter your password"
+                                    required
+                                />
+                                <button
+                                    type="button"
+                                    class="toggle-password"
+                                    onclick="togglePassword('login-password')"
+                                >
+                                    <svg
+                                        viewBox="0 0 24 24"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        stroke-width="2"
+                                    >
+                                        <path
+                                            d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"
+                                        />
+                                        <circle cx="12" cy="12" r="3" />
+                                    </svg>
+                                </button>
+                            </div>
+                        </div>
+                        <div class="form-options">
+                            <label class="checkbox-wrapper">
+                                <input type="checkbox" id="remember-me" />
+                                <span class="checkmark"></span>
+                                Remember me
+                            </label>
+                            <a
+                                href="#"
+                                class="forgot-link"
+                                onclick="showForm('forgot')"
+                                >Forgot password?</a
+                            >
+                        </div>
+                        <button type="submit" class="auth-btn primary">
+                            <span class="btn-text">Sign In</span>
+                            <span class="btn-loader" style="display: none">
+                                <svg class="spinner" viewBox="0 0 24 24">
+                                    <circle
+                                        cx="12"
+                                        cy="12"
+                                        r="10"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        stroke-width="3"
+                                    />
+                                </svg>
+                            </span>
+                        </button>
+                    </form>
+                    <div class="form-footer">
+                        <p>
+                            Don't have an account?
+                            <a href="#" onclick="showForm('register')"
+                                >Create one</a
+                            >
+                        </p>
+                    </div>
+                </div>
+
+                <!-- Register Form -->
+                <div class="auth-form" id="register-form">
+                    <div class="form-header">
+                        <h2>Create Account</h2>
+                        <p>Join LogSherlock to start investigating</p>
+                    </div>
+                    <form id="register-form-el">
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="register-fullname">Full Name</label>
+                                <div class="input-wrapper">
+                                    <svg
+                                        viewBox="0 0 24 24"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        stroke-width="2"
+                                    >
+                                        <path
+                                            d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"
+                                        />
+                                        <circle cx="12" cy="7" r="4" />
+                                    </svg>
+                                    <input
+                                        type="text"
+                                        id="register-fullname"
+                                        placeholder="Your full name"
+                                        required
+                                    />
+                                </div>
+                            </div>
+                            <div class="form-group">
+                                <label for="register-username">Username</label>
+                                <div class="input-wrapper">
+                                    <svg
+                                        viewBox="0 0 24 24"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        stroke-width="2"
+                                    >
+                                        <path
+                                            d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"
+                                        />
+                                        <circle cx="12" cy="7" r="4" />
+                                    </svg>
+                                    <input
+                                        type="text"
+                                        id="register-username"
+                                        placeholder="Choose username"
+                                        required
+                                    />
+                                </div>
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label for="register-email">Email</label>
+                            <div class="input-wrapper">
+                                <svg
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="2"
+                                >
+                                    <path
+                                        d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"
+                                    />
+                                    <polyline points="22,6 12,13 2,6" />
+                                </svg>
+                                <input
+                                    type="email"
+                                    id="register-email"
+                                    placeholder="Enter your email"
+                                    required
+                                />
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label for="register-password">Password</label>
+                            <div class="input-wrapper">
+                                <svg
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="2"
+                                >
+                                    <rect
+                                        x="3"
+                                        y="11"
+                                        width="18"
+                                        height="11"
+                                        rx="2"
+                                        ry="2"
+                                    />
+                                    <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                                </svg>
+                                <input
+                                    type="password"
+                                    id="register-password"
+                                    placeholder="Create a password"
+                                    required
+                                    minlength="6"
+                                />
+                                <button
+                                    type="button"
+                                    class="toggle-password"
+                                    onclick="
+                                        togglePassword('register-password')
+                                    "
+                                >
+                                    <svg
+                                        viewBox="0 0 24 24"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        stroke-width="2"
+                                    >
+                                        <path
+                                            d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"
+                                        />
+                                        <circle cx="12" cy="12" r="3" />
+                                    </svg>
+                                </button>
+                            </div>
+                            <div
+                                class="password-strength"
+                                id="password-strength"
+                            ></div>
+                        </div>
+                        <div class="form-group">
+                            <label for="register-confirm"
+                                >Confirm Password</label
+                            >
+                            <div class="input-wrapper">
+                                <svg
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="2"
+                                >
+                                    <rect
+                                        x="3"
+                                        y="11"
+                                        width="18"
+                                        height="11"
+                                        rx="2"
+                                        ry="2"
+                                    />
+                                    <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                                </svg>
+                                <input
+                                    type="password"
+                                    id="register-confirm"
+                                    placeholder="Confirm password"
+                                    required
+                                />
+                            </div>
+                        </div>
+                        <button type="submit" class="auth-btn primary">
+                            <span class="btn-text">Create Account</span>
+                            <span class="btn-loader" style="display: none">
+                                <svg class="spinner" viewBox="0 0 24 24">
+                                    <circle
+                                        cx="12"
+                                        cy="12"
+                                        r="10"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        stroke-width="3"
+                                    />
+                                </svg>
+                            </span>
+                        </button>
+                    </form>
+                    <div class="form-footer">
+                        <p>
+                            Already have an account?
+                            <a href="#" onclick="showForm('login')">Sign in</a>
+                        </p>
+                    </div>
+                </div>
+
+                <!-- Forgot Password Form -->
+                <div class="auth-form" id="forgot-form">
+                    <div class="form-header">
+                        <h2>Reset Password</h2>
+                        <p>Enter your email to receive a reset code</p>
+                    </div>
+                    <form id="forgot-form-el">
+                        <div class="form-group">
+                            <label for="forgot-email">Email</label>
+                            <div class="input-wrapper">
+                                <svg
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="2"
+                                >
+                                    <path
+                                        d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"
+                                    />
+                                    <polyline points="22,6 12,13 2,6" />
+                                </svg>
+                                <input
+                                    type="email"
+                                    id="forgot-email"
+                                    placeholder="Enter your email"
+                                    required
+                                />
+                            </div>
+                        </div>
+                        <button type="submit" class="auth-btn primary">
+                            <span class="btn-text">Send Reset Code</span>
+                            <span class="btn-loader" style="display: none">
+                                <svg class="spinner" viewBox="0 0 24 24">
+                                    <circle
+                                        cx="12"
+                                        cy="12"
+                                        r="10"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        stroke-width="3"
+                                    />
+                                </svg>
+                            </span>
+                        </button>
+                    </form>
+                    <div class="form-footer">
+                        <p>
+                            Remember your password?
+                            <a href="#" onclick="showForm('login')">Sign in</a>
+                        </p>
+                    </div>
+                </div>
+
+                <!-- OTP Verification Form -->
+                <div class="auth-form" id="otp-form">
+                    <div class="form-header">
+                        <h2>Verify Code</h2>
+                        <p>Enter the 6-digit code sent to your email</p>
+                    </div>
+                    <form id="otp-form-el">
+                        <div class="otp-container">
+                            <input
+                                type="text"
+                                class="otp-input"
+                                maxlength="1"
+                                data-index="0"
+                            />
+                            <input
+                                type="text"
+                                class="otp-input"
+                                maxlength="1"
+                                data-index="1"
+                            />
+                            <input
+                                type="text"
+                                class="otp-input"
+                                maxlength="1"
+                                data-index="2"
+                            />
+                            <input
+                                type="text"
+                                class="otp-input"
+                                maxlength="1"
+                                data-index="3"
+                            />
+                            <input
+                                type="text"
+                                class="otp-input"
+                                maxlength="1"
+                                data-index="4"
+                            />
+                            <input
+                                type="text"
+                                class="otp-input"
+                                maxlength="1"
+                                data-index="5"
+                            />
+                        </div>
+                        <div class="form-group">
+                            <label for="new-password">New Password</label>
+                            <div class="input-wrapper">
+                                <svg
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="2"
+                                >
+                                    <rect
+                                        x="3"
+                                        y="11"
+                                        width="18"
+                                        height="11"
+                                        rx="2"
+                                        ry="2"
+                                    />
+                                    <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                                </svg>
+                                <input
+                                    type="password"
+                                    id="new-password"
+                                    placeholder="Enter new password"
+                                    required
+                                    minlength="6"
+                                />
+                            </div>
+                        </div>
+                        <button type="submit" class="auth-btn primary">
+                            <span class="btn-text">Reset Password</span>
+                            <span class="btn-loader" style="display: none">
+                                <svg class="spinner" viewBox="0 0 24 24">
+                                    <circle
+                                        cx="12"
+                                        cy="12"
+                                        r="10"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        stroke-width="3"
+                                    />
+                                </svg>
+                            </span>
+                        </button>
+                    </form>
+                    <div class="form-footer">
+                        <p>
+                            Didn't receive code?
+                            <a href="#" onclick="resendOTP()">Resend</a>
+                        </p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Error/Success Message -->
+            <div class="auth-message" id="auth-message"></div>
+
+            <!-- Features Section -->
+            <div class="auth-features">
+                <div class="feature">
+                    <svg viewBox="0 0 24 24" fill="currentColor">
+                        <path
+                            d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4z"
+                        />
+                    </svg>
+                    <span>Secure Analysis</span>
+                </div>
+                <div class="feature">
+                    <svg viewBox="0 0 24 24" fill="currentColor">
+                        <path
+                            d="M9 21c0 .55.45 1 1 1h4c.55 0 1-.45 1-1v-1H9v1zm3-19C8.14 2 5 5.14 5 9c0 2.38 1.19 4.47 3 5.74V17c0 .55.45 1 1 1h6c.55 0 1-.45 1-1v-2.26c1.81-1.27 3-3.36 3-5.74 0-3.86-3.14-7-7-7z"
+                        />
+                    </svg>
+                    <span>AI-Powered</span>
+                </div>
+                <div class="feature">
+                    <svg viewBox="0 0 24 24" fill="currentColor">
+                        <path
+                            d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"
+                        />
+                    </svg>
+                    <span>MITRE ATT&CK</span>
+                </div>
+            </div>
+        </div>
+
+        <script src="auth.js"></script>
+    </body>
+</html>

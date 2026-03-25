@@ -3,7 +3,7 @@
     <head>
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <title>Investigation Dashboard - ForensicAI</title>
+        <title>Investigation Dashboard - LogSherlock</title>
         <link rel="stylesheet" href="styles.css" />
         <link
             href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap"
@@ -23,7 +23,12 @@
             <header class="dashboard-header">
                 <div class="header-left">
                     <a href="index.html" class="back-link">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <svg
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                        >
                             <path d="M19 12H5M12 19l-7-7 7-7" />
                         </svg>
                         Back
@@ -41,32 +46,129 @@
                         <span class="status-dot disconnected"></span>
                         <span class="status-text">Connecting...</span>
                     </div>
+                    <!-- Keyboard Shortcuts Hint -->
+                    <div class="keyboard-hint" title="Keyboard Shortcuts">
+                        <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd><kbd>4</kbd>
+                    </div>
                     <!-- View Toggle Buttons -->
                     <div class="view-toggle">
-                        <button class="view-btn active" data-view="main" title="Main View">
-                            <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18">
-                                <path d="M3 13h8V3H3v10zm0 8h8v-6H3v6zm10 0h8V11h-8v10zm0-18v6h8V3h-8z"/>
+                        <button
+                            class="view-btn active"
+                            data-view="main"
+                            title="Main View (1)"
+                        >
+                            <svg
+                                viewBox="0 0 24 24"
+                                fill="currentColor"
+                                width="18"
+                                height="18"
+                            >
+                                <path
+                                    d="M3 13h8V3H3v10zm0 8h8v-6H3v6zm10 0h8V11h-8v10zm0-18v6h8V3h-8z"
+                                />
                             </svg>
                         </button>
-                        <button class="view-btn" data-view="network" title="Network Graph">
-                            <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18">
-                                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/>
+                        <button
+                            class="view-btn"
+                            data-view="network"
+                            title="Network Graph (2)"
+                        >
+                            <svg
+                                viewBox="0 0 24 24"
+                                fill="currentColor"
+                                width="18"
+                                height="18"
+                            >
+                                <path
+                                    d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"
+                                />
                             </svg>
                         </button>
-                        <button class="view-btn" data-view="mitre" title="MITRE ATT&CK Matrix">
-                            <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18">
-                                <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/>
+                        <button
+                            class="view-btn"
+                            data-view="mitre"
+                            title="MITRE ATT&CK Matrix (3)"
+                        >
+                            <svg
+                                viewBox="0 0 24 24"
+                                fill="currentColor"
+                                width="18"
+                                height="18"
+                            >
+                                <path
+                                    d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"
+                                />
                             </svg>
                         </button>
-                        <button class="view-btn" data-view="charts" title="Analytics Charts">
-                            <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18">
-                                <path d="M3.5 18.49l6-6.01 4 4L22 6.92l-1.41-1.41-7.09 7.97-4-4L2 16.99z"/>
+                        <button
+                            class="view-btn"
+                            data-view="charts"
+                            title="Analytics Charts (4)"
+                        >
+                            <svg
+                                viewBox="0 0 24 24"
+                                fill="currentColor"
+                                width="18"
+                                height="18"
+                            >
+                                <path
+                                    d="M3.5 18.49l6-6.01 4 4L22 6.92l-1.41-1.41-7.09 7.97-4-4L2 16.99z"
+                                />
                             </svg>
                         </button>
                     </div>
-                    <button class="btn-icon" id="btn-export" title="Export Report">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                    <!-- Fullscreen Button -->
+                    <button
+                        class="btn-icon"
+                        id="btn-fullscreen"
+                        title="Fullscreen (F)"
+                    >
+                        <svg
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                        >
+                            <path
+                                d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"
+                            />
+                        </svg>
+                    </button>
+                    <!-- Sound Toggle -->
+                    <button
+                        class="btn-icon"
+                        id="btn-sound"
+                        title="Toggle Sound (S)"
+                    >
+                        <svg
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                            id="sound-icon"
+                        >
+                            <polygon
+                                points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"
+                            />
+                            <path
+                                d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"
+                            />
+                        </svg>
+                    </button>
+                    <button
+                        class="btn-icon"
+                        id="btn-export"
+                        title="Export Report (E)"
+                    >
+                        <svg
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                        >
+                            <path
+                                d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"
+                            />
                             <polyline points="7 10 12 15 17 10" />
                             <line x1="12" y1="15" x2="12" y2="3" />
                         </svg>
@@ -77,11 +179,34 @@
             <!-- Progress Bar -->
             <div class="progress-section">
                 <div class="progress-header">
-                    <span class="progress-phase" id="progress-phase">Initializing...</span>
-                    <span class="progress-percent" id="progress-percent">0%</span>
+                    <div class="breadcrumb-nav" id="breadcrumb-nav">
+                        <span class="breadcrumb-item completed">Upload</span>
+                        <span class="breadcrumb-separator">→</span>
+                        <span
+                            class="breadcrumb-item active"
+                            id="breadcrumb-phase"
+                            >Analysis</span
+                        >
+                        <span class="breadcrumb-separator">→</span>
+                        <span class="breadcrumb-item" id="breadcrumb-next"
+                            >Enrichment</span
+                        >
+                    </div>
+                    <div class="progress-info">
+                        <span class="progress-phase" id="progress-phase"
+                            >Initializing...</span
+                        >
+                        <span class="progress-percent" id="progress-percent"
+                            >0%</span
+                        >
+                    </div>
                 </div>
                 <div class="progress-bar">
-                    <div class="progress-fill" id="progress-fill" style="width: 0%"></div>
+                    <div
+                        class="progress-fill"
+                        id="progress-fill"
+                        style="width: 0%"
+                    ></div>
                 </div>
             </div>
 
@@ -92,8 +217,15 @@
                     <div class="panel steps-panel">
                         <div class="panel-header">
                             <h2>
-                                <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20">
-                                    <path d="M3 13h2v-2H3v2zm0 4h2v-2H3v2zm0-8h2V7H3v2zm4 4h14v-2H7v2zm0 4h14v-2H7v2zM7 7v2h14V7H7z"/>
+                                <svg
+                                    viewBox="0 0 24 24"
+                                    fill="currentColor"
+                                    width="20"
+                                    height="20"
+                                >
+                                    <path
+                                        d="M3 13h2v-2H3v2zm0 4h2v-2H3v2zm0-8h2V7H3v2zm4 4h14v-2H7v2zm0 4h14v-2H7v2zM7 7v2h14V7H7z"
+                                    />
                                 </svg>
                                 Analysis Steps
                             </h2>
@@ -101,7 +233,12 @@
                         </div>
                         <div class="panel-content steps-feed" id="steps-feed">
                             <div class="empty-state">
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <svg
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="2"
+                                >
                                     <circle cx="12" cy="12" r="10" />
                                     <polyline points="12 6 12 12 16 14" />
                                 </svg>
@@ -116,14 +253,83 @@
                         <div class="panel evidence-panel">
                             <div class="panel-header">
                                 <h2>
-                                    <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20">
-                                        <path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4z"/>
+                                    <svg
+                                        viewBox="0 0 24 24"
+                                        fill="currentColor"
+                                        width="20"
+                                        height="20"
+                                    >
+                                        <path
+                                            d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4z"
+                                        />
                                     </svg>
                                     Evidence Collected
                                 </h2>
                                 <span class="badge" id="evidence-count">0</span>
                             </div>
-                            <div class="panel-content evidence-grid" id="evidence-grid">
+                            <!-- Evidence Search & Filter Bar -->
+                            <div class="evidence-toolbar">
+                                <div class="search-box">
+                                    <svg
+                                        viewBox="0 0 24 24"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        stroke-width="2"
+                                        width="16"
+                                        height="16"
+                                    >
+                                        <circle cx="11" cy="11" r="8" />
+                                        <path d="m21 21-4.35-4.35" />
+                                    </svg>
+                                    <input
+                                        type="text"
+                                        id="evidence-search"
+                                        placeholder="Search evidence..."
+                                    />
+                                </div>
+                                <div
+                                    class="filter-buttons"
+                                    id="evidence-filters"
+                                >
+                                    <button
+                                        class="filter-btn active"
+                                        data-filter="all"
+                                    >
+                                        All
+                                    </button>
+                                    <button class="filter-btn" data-filter="ip">
+                                        IP
+                                    </button>
+                                    <button
+                                        class="filter-btn"
+                                        data-filter="domain"
+                                    >
+                                        Domain
+                                    </button>
+                                    <button
+                                        class="filter-btn"
+                                        data-filter="process"
+                                    >
+                                        Process
+                                    </button>
+                                    <button
+                                        class="filter-btn"
+                                        data-filter="file"
+                                    >
+                                        File
+                                    </button>
+                                    <button
+                                        class="filter-btn"
+                                        data-filter="hash"
+                                    >
+                                        Hash
+                                    </button>
+                                </div>
+                            </div>
+                            <div
+                                class="panel-content evidence-grid"
+                                id="evidence-grid"
+                            >
                                 <div class="empty-state">
                                     <p>No evidence collected yet</p>
                                 </div>
@@ -134,15 +340,28 @@
                         <div class="panel timeline-panel">
                             <div class="panel-header">
                                 <h2>
-                                    <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20">
-                                        <path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z"/>
+                                    <svg
+                                        viewBox="0 0 24 24"
+                                        fill="currentColor"
+                                        width="20"
+                                        height="20"
+                                    >
+                                        <path
+                                            d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z"
+                                        />
                                     </svg>
                                     Attack Timeline
                                 </h2>
                             </div>
-                            <div class="panel-content timeline-feed" id="timeline-feed">
+                            <div
+                                class="panel-content timeline-feed"
+                                id="timeline-feed"
+                            >
                                 <div class="empty-state">
-                                    <p>Timeline will populate as events are correlated</p>
+                                    <p>
+                                        Timeline will populate as events are
+                                        correlated
+                                    </p>
                                 </div>
                             </div>
                         </div>
@@ -154,16 +373,29 @@
                         <div class="panel mitre-panel">
                             <div class="panel-header">
                                 <h2>
-                                    <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20">
-                                        <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
+                                    <svg
+                                        viewBox="0 0 24 24"
+                                        fill="currentColor"
+                                        width="20"
+                                        height="20"
+                                    >
+                                        <path
+                                            d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"
+                                        />
                                     </svg>
                                     MITRE ATT&CK
                                 </h2>
                                 <span class="badge" id="mitre-count">0</span>
                             </div>
-                            <div class="panel-content mitre-grid" id="mitre-grid">
+                            <div
+                                class="panel-content mitre-grid"
+                                id="mitre-grid"
+                            >
                                 <div class="empty-state">
-                                    <p>Techniques will map as analysis progresses</p>
+                                    <p>
+                                        Techniques will map as analysis
+                                        progresses
+                                    </p>
                                 </div>
                             </div>
                         </div>
@@ -172,15 +404,27 @@
                         <div class="panel hypotheses-panel">
                             <div class="panel-header">
                                 <h2>
-                                    <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20">
-                                        <path d="M9 21c0 .55.45 1 1 1h4c.55 0 1-.45 1-1v-1H9v1zm3-19C8.14 2 5 5.14 5 9c0 2.38 1.19 4.47 3 5.74V17c0 .55.45 1 1 1h6c.55 0 1-.45 1-1v-2.26c1.81-1.27 3-3.36 3-5.74 0-3.86-3.14-7-7-7z"/>
+                                    <svg
+                                        viewBox="0 0 24 24"
+                                        fill="currentColor"
+                                        width="20"
+                                        height="20"
+                                    >
+                                        <path
+                                            d="M9 21c0 .55.45 1 1 1h4c.55 0 1-.45 1-1v-1H9v1zm3-19C8.14 2 5 5.14 5 9c0 2.38 1.19 4.47 3 5.74V17c0 .55.45 1 1 1h6c.55 0 1-.45 1-1v-2.26c1.81-1.27 3-3.36 3-5.74 0-3.86-3.14-7-7-7z"
+                                        />
                                     </svg>
                                     Attack Hypotheses
                                 </h2>
                             </div>
-                            <div class="panel-content hypotheses-list" id="hypotheses-list">
+                            <div
+                                class="panel-content hypotheses-list"
+                                id="hypotheses-list"
+                            >
                                 <div class="empty-state">
-                                    <p>Hypotheses will generate after analysis</p>
+                                    <p>
+                                        Hypotheses will generate after analysis
+                                    </p>
                                 </div>
                             </div>
                         </div>
@@ -189,36 +433,101 @@
                         <div class="panel chat-panel llm-chat">
                             <div class="panel-header">
                                 <h2>
-                                    <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20">
-                                        <path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/>
+                                    <svg
+                                        viewBox="0 0 24 24"
+                                        fill="currentColor"
+                                        width="20"
+                                        height="20"
+                                    >
+                                        <path
+                                            d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"
+                                        />
                                     </svg>
                                     AI Forensic Assistant
                                 </h2>
                                 <span class="ai-badge">GPT-4</span>
                             </div>
-                            <div class="panel-content chat-messages" id="chat-messages">
+                            <div
+                                class="panel-content chat-messages"
+                                id="chat-messages"
+                            >
                                 <div class="chat-message system">
                                     <div class="chat-avatar ai">
-                                        <svg viewBox="0 0 24 24" fill="currentColor">
-                                            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/>
+                                        <svg
+                                            viewBox="0 0 24 24"
+                                            fill="currentColor"
+                                        >
+                                            <path
+                                                d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"
+                                            />
                                         </svg>
                                     </div>
                                     <div class="chat-content">
-                                        <p>Hello! I'm your AI forensic assistant. Ask me questions about the investigation, such as:</p>
+                                        <p>
+                                            Hello! I'm your AI forensic
+                                            assistant. Ask me questions about
+                                            the investigation, such as:
+                                        </p>
                                         <ul class="chat-suggestions">
-                                            <li onclick="askQuestion('What processes connected to external IPs?')">What processes connected to external IPs?</li>
-                                            <li onclick="askQuestion('Summarize the malicious activity found')">Summarize the malicious activity found</li>
-                                            <li onclick="askQuestion('What are the persistence mechanisms?')">What are the persistence mechanisms?</li>
-                                            <li onclick="askQuestion('Show me credential theft indicators')">Show me credential theft indicators</li>
+                                            <li
+                                                onclick="
+                                                    askQuestion(
+                                                        'What processes connected to external IPs?',
+                                                    )
+                                                "
+                                            >
+                                                What processes connected to
+                                                external IPs?
+                                            </li>
+                                            <li
+                                                onclick="
+                                                    askQuestion(
+                                                        'Summarize the malicious activity found',
+                                                    )
+                                                "
+                                            >
+                                                Summarize the malicious activity
+                                                found
+                                            </li>
+                                            <li
+                                                onclick="
+                                                    askQuestion(
+                                                        'What are the persistence mechanisms?',
+                                                    )
+                                                "
+                                            >
+                                                What are the persistence
+                                                mechanisms?
+                                            </li>
+                                            <li
+                                                onclick="
+                                                    askQuestion(
+                                                        'Show me credential theft indicators',
+                                                    )
+                                                "
+                                            >
+                                                Show me credential theft
+                                                indicators
+                                            </li>
                                         </ul>
                                     </div>
                                 </div>
                             </div>
                             <div class="chat-input-container">
-                                <input type="text" id="chat-input" placeholder="Ask about the investigation..." class="chat-input" />
+                                <input
+                                    type="text"
+                                    id="chat-input"
+                                    placeholder="Ask about the investigation..."
+                                    class="chat-input"
+                                />
                                 <button id="chat-send" class="chat-send-btn">
-                                    <svg viewBox="0 0 24 24" fill="currentColor">
-                                        <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
+                                    <svg
+                                        viewBox="0 0 24 24"
+                                        fill="currentColor"
+                                    >
+                                        <path
+                                            d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"
+                                        />
                                     </svg>
                                 </button>
                             </div>
@@ -232,21 +541,131 @@
                 <div class="network-container">
                     <div class="network-header">
                         <h2>
-                            <svg viewBox="0 0 24 24" fill="currentColor" width="24" height="24">
-                                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z"/>
+                            <svg
+                                viewBox="0 0 24 24"
+                                fill="currentColor"
+                                width="24"
+                                height="24"
+                            >
+                                <path
+                                    d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z"
+                                />
                             </svg>
                             Network Relationship Graph
                         </h2>
+                        <div class="network-search">
+                            <svg
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                                width="16"
+                                height="16"
+                            >
+                                <circle cx="11" cy="11" r="8" />
+                                <path d="m21 21-4.35-4.35" />
+                            </svg>
+                            <input
+                                type="text"
+                                id="network-search"
+                                placeholder="Search nodes..."
+                            />
+                        </div>
                         <div class="network-legend">
-                            <span class="legend-item"><span class="legend-dot process"></span> Process</span>
-                            <span class="legend-item"><span class="legend-dot ip"></span> IP Address</span>
-                            <span class="legend-item"><span class="legend-dot domain"></span> Domain</span>
-                            <span class="legend-item"><span class="legend-dot file"></span> File</span>
-                            <span class="legend-item"><span class="legend-dot malware"></span> Malware</span>
+                            <span class="legend-item"
+                                ><span class="legend-dot process"></span>
+                                Process</span
+                            >
+                            <span class="legend-item"
+                                ><span class="legend-dot ip"></span> IP
+                                Address</span
+                            >
+                            <span class="legend-item"
+                                ><span class="legend-dot domain"></span>
+                                Domain</span
+                            >
+                            <span class="legend-item"
+                                ><span class="legend-dot file"></span>
+                                File</span
+                            >
+                            <span class="legend-item"
+                                ><span class="legend-dot malware"></span>
+                                Malware</span
+                            >
+                            <span class="legend-item"
+                                ><span class="legend-dot tool"></span>
+                                Tool</span
+                            >
                         </div>
                         <div class="network-controls">
-                            <button class="btn btn-secondary btn-sm" id="network-fit">Fit View</button>
-                            <button class="btn btn-secondary btn-sm" id="network-physics">Toggle Physics</button>
+                            <button
+                                class="btn btn-secondary btn-sm"
+                                id="network-fit"
+                                title="Fit to view"
+                            >
+                                <svg
+                                    viewBox="0 0 24 24"
+                                    fill="currentColor"
+                                    width="14"
+                                    height="14"
+                                >
+                                    <path
+                                        d="M3 5v4h2V5h4V3H5c-1.1 0-2 .9-2 2zm2 10H3v4c0 1.1.9 2 2 2h4v-2H5v-4zm14 4h-4v2h4c1.1 0 2-.9 2-2v-4h-2v4zm0-16h-4v2h4v4h2V5c0-1.1-.9-2-2-2z"
+                                    />
+                                </svg>
+                                Fit
+                            </button>
+                            <button
+                                class="btn btn-secondary btn-sm"
+                                id="network-physics"
+                                title="Toggle physics simulation"
+                            >
+                                <svg
+                                    viewBox="0 0 24 24"
+                                    fill="currentColor"
+                                    width="14"
+                                    height="14"
+                                >
+                                    <path
+                                        d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zM9 17H7v-7h2v7zm4 0h-2V7h2v10zm4 0h-2v-4h2v4z"
+                                    />
+                                </svg>
+                                Physics
+                            </button>
+                            <button
+                                class="btn btn-secondary btn-sm"
+                                id="network-cluster"
+                                title="Cluster by type"
+                            >
+                                <svg
+                                    viewBox="0 0 24 24"
+                                    fill="currentColor"
+                                    width="14"
+                                    height="14"
+                                >
+                                    <path
+                                        d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"
+                                    />
+                                </svg>
+                                Cluster
+                            </button>
+                            <button
+                                class="btn btn-primary btn-sm"
+                                id="network-export"
+                                title="Export as PNG"
+                            >
+                                <svg
+                                    viewBox="0 0 24 24"
+                                    fill="currentColor"
+                                    width="14"
+                                    height="14"
+                                >
+                                    <path
+                                        d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"
+                                    />
+                                </svg>
+                                Export PNG
+                            </button>
                         </div>
                     </div>
                     <div id="network-graph" class="network-graph"></div>
@@ -263,6 +682,10 @@
                             <span class="stat-value" id="stat-clusters">0</span>
                             <span class="stat-label">Clusters</span>
                         </div>
+                        <div class="stat-card">
+                            <span class="stat-value" id="stat-threats">0</span>
+                            <span class="stat-label">High Threat</span>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -272,15 +695,29 @@
                 <div class="mitre-matrix-container">
                     <div class="mitre-matrix-header">
                         <h2>
-                            <svg viewBox="0 0 24 24" fill="currentColor" width="24" height="24">
-                                <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2z"/>
+                            <svg
+                                viewBox="0 0 24 24"
+                                fill="currentColor"
+                                width="24"
+                                height="24"
+                            >
+                                <path
+                                    d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2z"
+                                />
                             </svg>
                             MITRE ATT&CK Matrix
                         </h2>
                         <div class="mitre-coverage">
                             <span class="coverage-label">Coverage:</span>
-                            <span class="coverage-value" id="mitre-coverage-percent">0%</span>
-                            <span class="coverage-detected">(<span id="mitre-detected-count">0</span> techniques detected)</span>
+                            <span
+                                class="coverage-value"
+                                id="mitre-coverage-percent"
+                                >0%</span
+                            >
+                            <span class="coverage-detected"
+                                >(<span id="mitre-detected-count">0</span>
+                                techniques detected)</span
+                            >
                         </div>
                     </div>
                     <div class="mitre-matrix" id="mitre-matrix">
@@ -359,7 +796,9 @@
                 <div class="modal-content modal-large">
                     <div class="modal-header">
                         <h2>Investigation Report</h2>
-                        <button class="modal-close" id="close-summary-modal">&times;</button>
+                        <button class="modal-close" id="close-summary-modal">
+                            &times;
+                        </button>
                     </div>
                     <div class="modal-body">
                         <div class="summary-content" id="summary-content">
@@ -367,35 +806,70 @@
                         </div>
                         <div class="summary-actions">
                             <button class="btn btn-primary" id="download-pdf">
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-                                    <polyline points="14 2 14 8 20 8"/>
-                                    <line x1="16" y1="13" x2="8" y2="13"/>
-                                    <line x1="16" y1="17" x2="8" y2="17"/>
-                                    <polyline points="10 9 9 9 8 9"/>
+                                <svg
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="2"
+                                >
+                                    <path
+                                        d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"
+                                    />
+                                    <polyline points="14 2 14 8 20 8" />
+                                    <line x1="16" y1="13" x2="8" y2="13" />
+                                    <line x1="16" y1="17" x2="8" y2="17" />
+                                    <polyline points="10 9 9 9 8 9" />
                                 </svg>
                                 Download PDF Report
                             </button>
-                            <button class="btn btn-secondary" id="download-json">
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-                                    <polyline points="7 10 12 15 17 10"/>
-                                    <line x1="12" y1="15" x2="12" y2="3"/>
+                            <button
+                                class="btn btn-secondary"
+                                id="download-json"
+                            >
+                                <svg
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="2"
+                                >
+                                    <path
+                                        d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"
+                                    />
+                                    <polyline points="7 10 12 15 17 10" />
+                                    <line x1="12" y1="15" x2="12" y2="3" />
                                 </svg>
                                 Download JSON
                             </button>
-                            <button class="btn btn-secondary" id="download-html">
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-                                    <polyline points="14 2 14 8 20 8"/>
+                            <button
+                                class="btn btn-secondary"
+                                id="download-html"
+                            >
+                                <svg
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="2"
+                                >
+                                    <path
+                                        d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"
+                                    />
+                                    <polyline points="14 2 14 8 20 8" />
                                 </svg>
                                 Download HTML
                             </button>
-                            <button class="btn btn-secondary" id="download-stix">
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                    <path d="M12 2L2 7l10 5 10-5-10-5z"/>
-                                    <path d="M2 17l10 5 10-5"/>
-                                    <path d="M2 12l10 5 10-5"/>
+                            <button
+                                class="btn btn-secondary"
+                                id="download-stix"
+                            >
+                                <svg
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="2"
+                                >
+                                    <path d="M12 2L2 7l10 5 10-5-10-5z" />
+                                    <path d="M2 17l10 5 10-5" />
+                                    <path d="M2 12l10 5 10-5" />
                                 </svg>
                                 Download STIX
                             </button>
@@ -409,10 +883,15 @@
                 <div class="modal-content modal-large">
                     <div class="modal-header">
                         <h2>Step Details</h2>
-                        <button class="modal-close" id="close-step-modal">&times;</button>
+                        <button class="modal-close" id="close-step-modal">
+                            &times;
+                        </button>
                     </div>
                     <div class="modal-body">
-                        <div class="step-detail-content" id="step-detail-content">
+                        <div
+                            class="step-detail-content"
+                            id="step-detail-content"
+                        >
                             <!-- Step details will be populated -->
                         </div>
                     </div>
@@ -424,7 +903,9 @@
                 <div class="modal-content">
                     <div class="modal-header">
                         <h2 id="mitre-modal-title">Technique Details</h2>
-                        <button class="modal-close" id="close-mitre-modal">&times;</button>
+                        <button class="modal-close" id="close-mitre-modal">
+                            &times;
+                        </button>
                     </div>
                     <div class="modal-body" id="mitre-modal-content">
                         <!-- Technique details will be populated -->

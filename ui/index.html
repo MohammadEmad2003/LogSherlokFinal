@@ -3,7 +3,7 @@
     <head>
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <title>Autonomous Forensic Orchestrator</title>
+        <title>LogSherlock - Autonomous Forensic Intelligence</title>
         <link rel="stylesheet" href="styles.css" />
         <link
             href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap"
@@ -22,16 +22,16 @@
                             stroke="currentColor"
                             stroke-width="2"
                         >
-                            <path d="M12 2L2 7l10 5 10-5-10-5z" />
-                            <path d="M2 17l10 5 10-5" />
-                            <path d="M2 12l10 5 10-5" />
+                            <circle cx="11" cy="11" r="8" />
+                            <path d="m21 21-4.35-4.35" />
+                            <path d="M11 8v6M8 11h6" />
                         </svg>
                     </div>
-                    <span class="logo-text">ForensicAI</span>
+                    <span class="logo-text">LogSherlock</span>
                 </div>
                 <nav class="main-nav">
                     <a href="#" class="nav-link active">Upload</a>
-                    <a href="#" class="nav-link" id="nav-sessions">Sessions</a>
+                    <a href="#" class="nav-link" id="nav-sessions">Chats</a>
                     <a href="#" class="nav-link" id="nav-tools">Tools</a>
                 </nav>
                 <div class="header-actions">
@@ -39,6 +39,53 @@
                         <span class="status-dot"></span>
                         System Online
                     </span>
+                    <div class="user-menu" id="user-menu">
+                        <button class="user-btn" id="user-btn">
+                            <div class="user-avatar" id="user-avatar">U</div>
+                            <span class="user-name" id="user-name">User</span>
+                            <svg
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                                width="16"
+                                height="16"
+                            >
+                                <polyline points="6 9 12 15 18 9" />
+                            </svg>
+                        </button>
+                        <div class="user-dropdown" id="user-dropdown">
+                            <a href="#" class="dropdown-item" id="profile-link">
+                                <svg
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="2"
+                                >
+                                    <path
+                                        d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"
+                                    />
+                                    <circle cx="12" cy="7" r="4" />
+                                </svg>
+                                Profile
+                            </a>
+                            <a href="#" class="dropdown-item" id="logout-btn">
+                                <svg
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="2"
+                                >
+                                    <path
+                                        d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"
+                                    />
+                                    <polyline points="16 17 21 12 16 7" />
+                                    <line x1="21" y1="12" x2="9" y2="12" />
+                                </svg>
+                                Sign Out
+                            </a>
+                        </div>
+                    </div>
                 </div>
             </header>
 
@@ -48,8 +95,8 @@
                 <section class="hero-section">
                     <div class="hero-content">
                         <h1 class="hero-title">
-                            <span class="gradient-text">Autonomous</span>
-                            Forensic Orchestrator
+                            <span class="gradient-text">LogSherlock</span>
+                            Forensic Intelligence
                         </h1>
                         <p class="hero-subtitle">
                             AI-powered digital forensics platform that
@@ -361,18 +408,27 @@
                 </section>
             </main>
 
-            <!-- Sessions Modal -->
+            <!-- Chats Modal -->
             <div class="modal" id="sessions-modal">
-                <div class="modal-content">
+                <div class="modal-content modal-chats">
                     <div class="modal-header">
-                        <h2>Investigation Sessions</h2>
-                        <button class="modal-close" id="close-sessions-modal">
-                            &times;
-                        </button>
+                        <div class="modal-title-group">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
+                                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+                            </svg>
+                            <h2>Chats</h2>
+                        </div>
+                        <button class="modal-close" id="close-sessions-modal">&times;</button>
                     </div>
                     <div class="modal-body">
+                        <div class="chats-search">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                                <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
+                            </svg>
+                            <input type="text" id="chats-search-input" placeholder="Search investigations..." />
+                        </div>
                         <div class="sessions-list" id="sessions-list">
-                            <p class="no-sessions">Loading sessions...</p>
+                            <p class="no-sessions">Loading chats...</p>
                         </div>
                     </div>
                 </div>
@@ -390,6 +446,26 @@
                     <div class="modal-body">
                         <div class="tools-list" id="tools-list">
                             <p>Loading tools...</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <!-- Profile Modal -->
+            <div class="modal" id="profile-modal">
+                <div class="modal-content modal-profile">
+                    <div class="modal-header">
+                        <div class="modal-title-group">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
+                                <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+                                <circle cx="12" cy="7" r="4"/>
+                            </svg>
+                            <h2>Profile</h2>
+                        </div>
+                        <button class="modal-close" id="close-profile-modal">&times;</button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="profile-content" id="profile-content">
+                            <div class="profile-loading">Loading profile...</div>
                         </div>
                     </div>
                 </div>
