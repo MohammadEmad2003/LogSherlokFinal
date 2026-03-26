@@ -1,11 +1,15 @@
 """
 Autonomous Forensic Orchestrator
-Implements ReAct pattern: Reason → Act → Observe loop
+Uses the CAI DFIR Agent via Runner.run() for forensic investigation.
+Implements iterative agent invocation with per-step dashboard updates.
 """
 import asyncio
+import os
+import re
+import json
+import traceback
 from typing import List, Dict, Any, Optional, Callable
 from datetime import datetime
-import json
 
 from schemas import (
     ForensicScenario, AgentStep, Evidence, ModelOutput,
@@ -15,48 +19,148 @@ from schemas import (
 
 # Handle imports for both running as module and standalone
 try:
-    from backend.tools import create_forensic_tools, ForensicTools
-except ImportError:
-    from tools import create_forensic_tools, ForensicTools
-
-try:
     from backend.utils import (
-        LLMClient, MITREMapper, StateManager, TodoManager,
+        MITREMapper, StateManager, TodoManager,
         generate_session_id, format_evidence_for_display,
         format_step_for_display, should_continue_investigation
     )
 except ImportError:
     from utils import (
-        LLMClient, MITREMapper, StateManager, TodoManager,
+        MITREMapper, StateManager, TodoManager,
         generate_session_id, format_evidence_for_display,
         format_step_for_display, should_continue_investigation
     )
 
+# Evidence extraction patterns (kept from original, used to parse agent output)
+EVIDENCE_PATTERNS = {
+    'ip': re.compile(r'\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b'),
+    'domain': re.compile(r'\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\b'),
+    'md5': re.compile(r'\b[a-fA-F0-9]{32}\b'),
+    'sha1': re.compile(r'\b[a-fA-F0-9]{40}\b'),
+    'sha256': re.compile(r'\b[a-fA-F0-9]{64}\b'),
+    'url': re.compile(r'https?://[^\s<>"{}|\\^`\[\]]+'),
+    'email': re.compile(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'),
+    'file_path': re.compile(r'(?:[A-Z]:\\|/)[^\s"\'<>|*?]+'),
+}
+
+# Private/benign filters
+PRIVATE_IP_PREFIXES = ('0.', '10.', '127.', '169.254.')
+BENIGN_DOMAINS = {'microsoft.com', 'windows.com', 'apple.com', 'google.com',
+                  'github.com', 'localhost', 'example.com'}
+
+
+def _is_private_ip(ip: str) -> bool:
+    """Check if IP is private/local."""
+    parts = ip.split('.')
+    try:
+        first = int(parts[0])
+        second = int(parts[1])
+        if first in (0, 10, 127):
+            return True
+        if first == 172 and 16 <= second <= 31:
+            return True
+        if first == 192 and second == 168:
+            return True
+    except (ValueError, IndexError):
+        pass
+    return False
+
+
+def extract_evidence_from_text(text: str, source: str) -> List[Evidence]:
+    """Extract evidence items from text output using regex patterns."""
+    evidence_list = []
+    for ev_type, pattern in EVIDENCE_PATTERNS.items():
+        matches = pattern.findall(text)
+        for match in set(matches):
+            # Filter false positives
+            if ev_type == 'ip' and _is_private_ip(match):
+                continue
+            if ev_type == 'domain' and any(b in match.lower() for b in BENIGN_DOMAINS):
+                continue
+            if ev_type == 'domain' and len(match) < 5:
+                continue
+
+            # Infer MITRE tactics
+            tactics = []
+            techniques = []
+            if ev_type in ('ip', 'domain', 'url'):
+                tactics = ['command-and-control']
+                techniques = ['T1071']
+            elif ev_type in ('md5', 'sha1', 'sha256'):
+                tactics = ['defense-evasion']
+                techniques = ['T1027']
+            elif ev_type == 'file_path':
+                tactics = ['execution']
+                techniques = ['T1059']
+
+            evidence_list.append(Evidence(
+                type=ev_type,
+                value=match,
+                confidence=0.7,
+                threat_score=0.4,
+                source=source,
+                context={"extracted_from": "agent_output"},
+                mitre_tactics=tactics,
+                mitre_techniques=techniques,
+            ))
+
+    # Extract process names (.exe, .dll)
+    proc_pattern = re.compile(r'\b[A-Za-z0-9_\-]+\.(?:exe|dll)\b', re.IGNORECASE)
+    for match in set(proc_pattern.findall(text)):
+        if len(match) > 4:
+            evidence_list.append(Evidence(
+                type='process',
+                value=match,
+                confidence=0.6,
+                threat_score=0.4,
+                source=source,
+                context={"extracted_from": "agent_output"},
+                mitre_tactics=['execution'],
+                mitre_techniques=['T1059'],
+            ))
+
+    return evidence_list
+
 
 class ForensicOrchestrator:
     """
-    Autonomous forensic investigation orchestrator
-    Implements ReAct pattern for iterative analysis
+    Autonomous forensic investigation orchestrator.
+    Uses the CAI DFIR Agent via Runner.run() for each investigation step.
     """
 
     def __init__(
         self,
-        llm_client: LLMClient,
         websocket_callback: Optional[Callable] = None,
         max_steps: int = 50
     ):
-        self.llm_client = llm_client
         self.websocket_callback = websocket_callback
         self.max_steps = max_steps
 
         # Initialize components
-        self.forensic_tools: ForensicTools = create_forensic_tools()
         self.mitre_mapper = MITREMapper()
         self.state_manager = StateManager()
         self.todo_manager = TodoManager()
 
+        # DFIR Agent (lazy-loaded)
+        self._dfir_agent = None
+
         # Tracking
         self.current_session: Optional[str] = None
+
+    def _get_dfir_agent(self):
+        """Lazy-load the DFIR agent from cai.agents."""
+        if self._dfir_agent is None:
+            try:
+                from cai.agents.dfir import dfir_agent
+                self._dfir_agent = dfir_agent
+                print("[ORCHESTRATOR] DFIR Agent loaded successfully")
+            except ImportError as e:
+                print(f"[ORCHESTRATOR] Failed to import DFIR agent: {e}")
+                raise RuntimeError(
+                    "Could not import DFIR agent from cai.agents.dfir. "
+                    "Make sure the cai package is installed and accessible."
+                ) from e
+        return self._dfir_agent
 
     async def start_investigation(
         self,
@@ -67,11 +171,9 @@ class ForensicOrchestrator:
         session_id: Optional[str] = None
     ) -> str:
         """
-        Start a new autonomous investigation
+        Start a new autonomous investigation.
         Returns session_id
         """
-
-        # Use provided session_id (from WebSocket/upload) or generate a new one
         if not session_id:
             session_id = generate_session_id()
         self.current_session = session_id
@@ -105,23 +207,29 @@ class ForensicOrchestrator:
         await self._send_dashboard_update("step", {
             "message": f"Investigation started for {artifact_name}",
             "phase": "initialization",
-            "artifact_type": artifact_type
+            "artifact_type": artifact_type,
+            "step_number": 0,
+            "reasoning": f"Starting forensic investigation of {artifact_type} artifact: {artifact_name}",
+            "action": "Initializing investigation...",
+            "observation": f"Artifact uploaded: {artifact_name} ({artifact_type})",
+            "confidence": 0.5,
+            "evidence_count": 0,
         })
 
         await self._send_dashboard_update("todo", {
             "todos": [self._format_todo(t) for t in initial_todos]
         })
 
-        # Start ReAct loop
-        asyncio.create_task(self._react_loop(session_id))
+        # Start investigation loop
+        asyncio.create_task(self._investigation_loop(session_id))
 
         return session_id
 
-    async def _react_loop(self, session_id: str):
+    async def _investigation_loop(self, session_id: str):
         """
-        Main ReAct loop: Reason → Act → Observe
+        Main investigation loop — iteratively calls the DFIR Agent.
+        Each step: build prompt → Runner.run(dfir_agent) → parse result → update state.
         """
-
         state = self.state_manager.get_state(session_id)
         if not state:
             print(f"Error: No state found for session {session_id}")
@@ -130,45 +238,152 @@ class ForensicOrchestrator:
         step_number = 1
 
         try:
+            # Lazy-load Runner and agent
+            from cai.sdk.agents import Runner
+            agent = self._get_dfir_agent()
+
             while should_continue_investigation(state, self.max_steps):
                 print(f"\n{'=' * 60}")
-                print(f"STEP {step_number}: Starting ReAct cycle")
+                print(f"STEP {step_number}: Running DFIR Agent")
                 print(f"{'=' * 60}")
 
-                # === PHASE 1: REASON ===
-                reasoning_result = await self._reason_phase(state)
+                # Build the investigation prompt for this step
+                prompt = self._build_investigation_prompt(state)
 
-                if not reasoning_result:
-                    print("Reasoning failed, stopping investigation")
-                    break
+                try:
+                    # Call the DFIR agent via Runner.run()
+                    result = await Runner.run(
+                        starting_agent=agent,
+                        input=prompt,
+                        max_turns=3,  # Allow agent to make a few tool calls per step
+                    )
 
-                # Check if investigation should complete
-                if not reasoning_result.should_continue or reasoning_result.action_type == "complete":
-                    await self._complete_investigation(state, reasoning_result.reasoning)
-                    break
+                    # Parse the agent result
+                    agent_output_text = str(result.final_output) if result.final_output else ""
 
-                # === PHASE 2: ACT ===
-                action_result = await self._act_phase(state, reasoning_result)
+                    # Extract tool calls info from run items
+                    tool_calls_made = []
+                    tool_outputs = []
+                    reasoning_text = ""
 
-                # === PHASE 3: OBSERVE ===
-                observation_result = await self._observe_phase(state, action_result, reasoning_result)
+                    for item in result.new_items:
+                        item_dict = item.to_input_item() if hasattr(item, 'to_input_item') else {}
+
+                        # Handle different item types
+                        if hasattr(item, 'raw_item'):
+                            raw = item.raw_item
+                            # Check for tool call items
+                            if hasattr(raw, 'type'):
+                                if raw.type == 'function_call':
+                                    tool_name = getattr(raw, 'name', 'unknown_tool')
+                                    tool_args = getattr(raw, 'arguments', '{}')
+                                    tool_calls_made.append(f"{tool_name}({tool_args[:200]})")
+                                elif raw.type == 'function_call_output':
+                                    output_text = getattr(raw, 'output', '')
+                                    if output_text:
+                                        tool_outputs.append(str(output_text)[:2000])
+                            # Check for message items
+                            if hasattr(raw, 'role') and raw.role == 'assistant':
+                                content = getattr(raw, 'content', '')
+                                if isinstance(content, str) and content:
+                                    reasoning_text += content + "\n"
+                                elif isinstance(content, list):
+                                    for part in content:
+                                        if hasattr(part, 'text'):
+                                            reasoning_text += part.text + "\n"
+
+                    # Build clear reasoning and action descriptions
+                    if not reasoning_text and agent_output_text:
+                        reasoning_text = agent_output_text
+
+                    action_description = ""
+                    if tool_calls_made:
+                        action_description = " → ".join(tool_calls_made[:3])
+                    elif reasoning_text:
+                        # Extract first meaningful sentence
+                        first_line = reasoning_text.strip().split('\n')[0][:200]
+                        action_description = first_line
+
+                    # Combine all text for evidence extraction
+                    all_output = "\n".join([reasoning_text] + tool_outputs + [agent_output_text])
+
+                    # Extract evidence from the output
+                    new_evidence = extract_evidence_from_text(all_output, f"dfir_agent_step_{step_number}")
+
+                    # Build observation summary
+                    observation = ""
+                    if new_evidence:
+                        evidence_summary = {}
+                        for ev in new_evidence:
+                            evidence_summary[ev.type] = evidence_summary.get(ev.type, 0) + 1
+                        summary_parts = [f"{count} {t}(s)" for t, count in evidence_summary.items()]
+                        observation = f"Agent analysis complete. Found {len(new_evidence)} evidence items: {', '.join(summary_parts)}"
+                    elif tool_outputs:
+                        observation = f"Agent executed {len(tool_calls_made)} tool(s). Output received for analysis."
+                    else:
+                        observation = "Agent completed reasoning step. No new evidence extracted."
+
+                    if agent_output_text and len(agent_output_text) > 10:
+                        # Add a snippet of the agent's analysis
+                        snippet = agent_output_text[:300].replace('\n', ' ')
+                        observation += f" Analysis: {snippet}"
+
+                    # Check if the agent indicates the investigation is complete
+                    is_complete = any(phrase in agent_output_text.lower() for phrase in [
+                        "investigation complete",
+                        "analysis is complete",
+                        "investigation is done",
+                        "concludes the investigation",
+                        "no further analysis needed",
+                        "final report",
+                    ])
+
+                    # Determine confidence based on evidence found
+                    confidence = 0.5
+                    if new_evidence:
+                        confidence = min(0.6 + len(new_evidence) * 0.05, 0.95)
+                    if tool_calls_made:
+                        confidence = max(confidence, 0.6)
+
+                    print(f"[STEP {step_number}] Tools called: {len(tool_calls_made)}")
+                    print(f"[STEP {step_number}] Evidence found: {len(new_evidence)}")
+                    print(f"[STEP {step_number}] Reasoning: {reasoning_text[:120] if reasoning_text else 'N/A'}")
+
+                except Exception as e:
+                    print(f"[STEP {step_number}] Agent error: {e}")
+                    traceback.print_exc()
+                    state.error_log.append(f"Step {step_number} error: {str(e)}")
+
+                    # Fallback: use generic analysis
+                    reasoning_text = f"Agent encountered an error: {str(e)}. Attempting fallback analysis."
+                    action_description = f"strings '{state.scenario.artifact_path}' | head -100"
+                    observation = f"Error in agent execution: {str(e)}"
+                    new_evidence = []
+                    is_complete = False
+                    confidence = 0.3
+                    tool_calls_made = []
+                    tool_outputs = []
 
                 # Create agent step
                 agent_step = AgentStep(
                     step_number=step_number,
                     phase="complete",
-                    reasoning=reasoning_result.reasoning,
-                    action=reasoning_result.action,
-                    action_type=reasoning_result.action_type,
-                    observation=observation_result['observation'],
-                    evidence_found=observation_result.get('evidence', []),
-                    confidence=reasoning_result.confidence,
-                    error=observation_result.get('error')
+                    reasoning=reasoning_text[:500] if reasoning_text else f"Analysis step {step_number}",
+                    action=action_description or f"Forensic analysis step {step_number}",
+                    action_type="command" if tool_calls_made else "analysis",
+                    observation=observation,
+                    evidence_found=new_evidence,
+                    confidence=confidence,
+                    error=None if not state.error_log else state.error_log[-1] if state.error_log else None
                 )
 
                 # Update state
                 state.steps.append(agent_step)
-                state.evidence.extend(observation_result.get('evidence', []))
+                state.evidence.extend(new_evidence)
+
+                # Enrich evidence with MITRE mappings
+                for ev in new_evidence:
+                    self.mitre_mapper.enrich_evidence(ev)
 
                 # Update MITRE coverage
                 state.mitre_coverage = self.mitre_mapper.update_coverage(state.evidence)
@@ -181,217 +396,130 @@ class ForensicOrchestrator:
                 self.state_manager.update_phase(state)
 
                 # Update hypotheses
-                await self._update_hypotheses(state, observation_result)
+                await self._update_hypotheses(state)
 
                 # Update todos
-                await self._update_todos(state, reasoning_result, action_result)
+                await self._update_todos(state, action_description)
 
                 # Save state
                 self.state_manager.update_state(session_id, state)
 
                 # Send dashboard updates
                 await self._send_step_update(agent_step)
-                for evidence in observation_result.get('evidence', []):
+                for evidence in new_evidence:
                     await self._send_evidence_update(evidence)
 
-                # Increment step
-                step_number += 1
+                # Check if complete
+                if is_complete:
+                    await self._complete_investigation(
+                        state,
+                        reasoning_text or "Investigation completed by DFIR agent."
+                    )
+                    break
 
-                # Minimal delay between steps (just enough for UI updates)
+                step_number += 1
                 await asyncio.sleep(0.5)
 
+            # If loop ended without explicit completion
+            if state.status != "completed":
+                await self._complete_investigation(
+                    state,
+                    f"Investigation completed after {len(state.steps)} analysis steps."
+                )
+
         except Exception as e:
-            print(f"Error in ReAct loop: {e}")
+            print(f"Error in investigation loop: {e}")
+            traceback.print_exc()
             state.status = "error"
-            state.error_log.append(f"ReAct loop error: {str(e)}")
+            state.error_log.append(f"Investigation loop error: {str(e)}")
             await self._send_dashboard_update("error", {
                 "message": f"Investigation error: {str(e)}"
             })
-
         finally:
-            # Ensure state is saved
             self.state_manager.update_state(session_id, state)
 
-    async def _reason_phase(self, state: FullState) -> Optional[ModelOutput]:
-        """
-        REASON: Determine next best action using LLM
-        """
+    def _build_investigation_prompt(self, state: FullState) -> str:
+        """Build a prompt for the DFIR agent based on current investigation state."""
+        artifact_type = state.scenario.artifact_type
+        artifact_path = state.scenario.artifact_path
+        artifact_name = state.scenario.artifact_name
+        steps_count = len(state.steps)
+        phase = state.current_phase
 
-        print("\n[REASON] Analyzing current state and determining next action...")
+        prompt = f"""FORENSIC INVESTIGATION TASK
 
-        # Build context for LLM
-        context = self._build_context(state)
+You are investigating a {artifact_type} forensic artifact.
+Artifact: {artifact_name}
+Path: {artifact_path}
+Investigation Phase: {phase}
+Steps Completed: {steps_count}
 
-        try:
-            # Generate reasoning
-            model_output = await self.llm_client.generate_reasoning(context)
+"""
+        # Add evidence summary
+        if state.evidence:
+            evidence_by_type = {}
+            for ev in state.evidence[-20:]:
+                if ev.type not in evidence_by_type:
+                    evidence_by_type[ev.type] = []
+                evidence_by_type[ev.type].append(ev.value)
 
-            print(f"[REASON] Reasoning: {model_output.reasoning[:120]}")
-            print(f"[REASON] Planned Action: {model_output.action}")
-            print(f"[REASON] Confidence: {model_output.confidence:.2f}")
-
-            return model_output
-
-        except Exception as e:
-            print(f"[REASON] LLM error (using fallback): {e}")
-            state.error_log.append(f"Reasoning error: {str(e)}")
-
-            # Return a safe fallback that keeps the investigation alive
-            artifact_type = state.scenario.artifact_type
-            fallback_commands = {
-                "memory_dump": f"strings '{state.scenario.artifact_path}' | head -200",
-                "disk_image": f"file '{state.scenario.artifact_path}'",
-                "evtx": f"strings '{state.scenario.artifact_path}' | grep -i 'event\\|error\\|fail' | head -50",
-                "pcap": f"strings '{state.scenario.artifact_path}' | grep -E '([0-9]{{1,3}}\\.?){{4}}' | head -50",
-                "malware_sample": f"strings '{state.scenario.artifact_path}' | head -100",
-            }
-            fallback_cmd = fallback_commands.get(
-                artifact_type,
-                f"file '{state.scenario.artifact_path}' && strings '{state.scenario.artifact_path}' | head -100"
-            )
-
-            return ModelOutput(
-                reasoning=f"LLM unavailable, executing fallback analysis for {artifact_type} artifact",
-                action=fallback_cmd,
-                action_type="command",
-                expected_output="Basic artifact metadata and string extraction",
-                confidence=0.3,
-                should_continue=True,
-                priority="medium"
-            )
-
-    async def _act_phase(self, state: FullState, reasoning: ModelOutput) -> Dict[str, Any]:
-        """
-        ACT: Execute the planned action
-        """
-
-        print(f"\n[ACT] Executing: {reasoning.action}")
-
-        # Handle different action types
-        if reasoning.action_type == "command":
-            # Execute forensic command
-            result = self.forensic_tools.execute_tool(
-                command=reasoning.action,
-                reasoning=reasoning.reasoning
-            )
-
-            print(f"[ACT] Command executed: {result.success}")
-            if result.error:
-                print(f"[ACT] Error: {result.error}")
-
-            return {
-                'type': 'command',
-                'success': result.success,
-                'output': result.output,
-                'error': result.error,
-                'evidence': result.evidence_extracted,
-                'execution_time': result.execution_time
-            }
-
-        elif reasoning.action_type == "analysis":
-            # Analytical action (no command execution)
-            print(f"[ACT] Performing analysis: {reasoning.action}")
-            return {
-                'type': 'analysis',
-                'success': True,
-                'output': f"Analysis: {reasoning.expected_output}",
-                'evidence': []
-            }
-
-        elif reasoning.action_type == "query":
-            # Query existing evidence
-            print(f"[ACT] Querying evidence: {reasoning.action}")
-            # Search in existing evidence
-            query_results = self._query_evidence(state, reasoning.action)
-            return {
-                'type': 'query',
-                'success': True,
-                'output': json.dumps(query_results, indent=2),
-                'evidence': []
-            }
-
+            prompt += f"EVIDENCE FOUND SO FAR ({len(state.evidence)} items):\n"
+            for ev_type, values in evidence_by_type.items():
+                display = ', '.join(values[:5])
+                if len(values) > 5:
+                    display += f" ... and {len(values) - 5} more"
+                prompt += f"  - {ev_type}: {display}\n"
         else:
-            return {
-                'type': 'unknown',
-                'success': False,
-                'output': '',
-                'error': f"Unknown action type: {reasoning.action_type}",
-                'evidence': []
-            }
+            prompt += "EVIDENCE FOUND: None yet\n"
 
-    async def _observe_phase(
-        self,
-        state: FullState,
-        action_result: Dict[str, Any],
-        reasoning: ModelOutput
-    ) -> Dict[str, Any]:
-        """
-        OBSERVE: Process action results and extract insights
-        """
+        # Add recent observations
+        if state.steps:
+            prompt += "\nRECENT ANALYSIS:\n"
+            for step in state.steps[-3:]:
+                if step.observation:
+                    prompt += f"  Step {step.step_number}: {step.observation[:150]}\n"
 
-        print(f"\n[OBSERVE] Processing action results...")
+        # Add pending todos
+        pending = [t for t in state.todos if t.status == 'pending']
+        if pending:
+            prompt += "\nPENDING TASKS:\n"
+            for todo in pending[:5]:
+                prompt += f"  - [{todo.priority}] {todo.task}\n"
 
-        observation = ""
-        evidence = action_result.get('evidence', [])
-        error = action_result.get('error')
+        # Phase-specific guidance
+        guidance = {
+            'initialization': f'Start by identifying the artifact type and extracting basic metadata. Run: file "{artifact_path}" and strings "{artifact_path}" | head -200',
+            'initial_analysis': 'Perform broad analysis to understand artifact contents. Look for suspicious strings, IPs, domains, executables.',
+            'deep_analysis': 'Focus on suspicious findings. Extract detailed evidence. Investigate IOCs found.',
+            'threat_hunting': 'Hunt for specific indicators of compromise. Check for malware signatures, C2 communication patterns.',
+            'correlation': 'Connect evidence pieces and build attack timeline. Summarize the attack narrative.',
+            'finalization': 'Summarize all findings. Set action_type to "complete" if done.'
+        }.get(phase, 'Continue the investigation based on current evidence.')
 
-        if action_result['success']:
-            output = action_result.get('output', '')
+        prompt += f"\nGUIDANCE: {guidance}\n"
 
-            # Format observation
-            if action_result['type'] == 'command':
-                observation = f"Command executed successfully. "
-                if evidence:
-                    observation += f"Found {len(evidence)} pieces of evidence: "
-                    # Summarize evidence
-                    evidence_summary = {}
-                    for ev in evidence:
-                        ev_type = ev.type
-                        evidence_summary[ev_type] = evidence_summary.get(ev_type, 0) + 1
+        if steps_count >= self.max_steps - 2:
+            prompt += "\nNOTE: Investigation is nearing the step limit. Please summarize findings and conclude.\n"
 
-                    summary_parts = [f"{count} {ev_type}(s)" for ev_type, count in evidence_summary.items()]
-                    observation += ", ".join(summary_parts)
+        prompt += """
+Execute the next most valuable forensic analysis action. Use generic_linux_command to run commands.
+Be specific and explain your reasoning clearly."""
 
-                    # Enrich evidence with MITRE mappings
-                    evidence = [self.mitre_mapper.enrich_evidence(ev) for ev in evidence]
-                else:
-                    observation += "No specific evidence extracted, but output available for analysis."
+        return prompt
 
-            elif action_result['type'] == 'analysis':
-                observation = f"Analysis completed. {reasoning.expected_output}"
-
-            elif action_result['type'] == 'query':
-                observation = f"Query completed. {action_result.get('output', '')}"
-
-            print(f"[OBSERVE] {observation}")
-
-        else:
-            observation = f"Action failed: {error}"
-            print(f"[OBSERVE] ERROR: {observation}")
-
-        return {
-            'observation': observation,
-            'evidence': evidence,
-            'error': error
-        }
-
-    async def _update_hypotheses(self, state: FullState, observation_result: Dict[str, Any]):
-        """Update attack hypotheses based on new evidence"""
-
-        # Simple hypothesis generation based on evidence
+    async def _update_hypotheses(self, state: FullState):
+        """Update attack hypotheses based on evidence."""
         evidence_types = {}
         for ev in state.evidence:
-            ev_type = ev.type
-            evidence_types[ev_type] = evidence_types.get(ev_type, 0) + 1
+            evidence_types[ev.type] = evidence_types.get(ev.type, 0) + 1
 
-        # Generate hypotheses
         new_hypotheses = []
 
         if evidence_types.get('ip', 0) > 3 or evidence_types.get('domain', 0) > 3:
             new_hypotheses.append(AttackHypothesis(
                 hypothesis="Possible C2 (Command and Control) communication detected",
                 confidence=min(0.6 + (evidence_types.get('ip', 0) * 0.05), 0.95),
-                supporting_evidence=[ev.value for ev in state.evidence if ev.type in ['ip', 'domain']][:5],
+                supporting_evidence=[ev.value for ev in state.evidence if ev.type in ('ip', 'domain')][:5],
                 mitre_tactics=['command-and-control'],
                 mitre_techniques=['T1071'],
                 severity='high'
@@ -407,11 +535,19 @@ class ForensicOrchestrator:
                 severity='medium'
             ))
 
-        # Update state hypotheses (avoid duplicates)
+        if evidence_types.get('url', 0) > 2:
+            new_hypotheses.append(AttackHypothesis(
+                hypothesis="Potential data exfiltration or malicious download activity",
+                confidence=0.65,
+                supporting_evidence=[ev.value for ev in state.evidence if ev.type == 'url'][:5],
+                mitre_tactics=['exfiltration', 'command-and-control'],
+                mitre_techniques=['T1071.001'],
+                severity='high'
+            ))
+
         for new_hyp in new_hypotheses:
             if not any(h.hypothesis == new_hyp.hypothesis for h in state.hypotheses):
                 state.hypotheses.append(new_hyp)
-                # Send hypothesis update
                 await self._send_dashboard_update("hypothesis", {
                     'hypothesis': new_hyp.hypothesis,
                     'confidence': new_hyp.confidence,
@@ -419,70 +555,55 @@ class ForensicOrchestrator:
                     'supporting_evidence': new_hyp.supporting_evidence
                 })
 
-    async def _update_todos(
-        self,
-        state: FullState,
-        reasoning: ModelOutput,
-        action_result: Dict[str, Any]
-    ):
-        """Update dynamic to-do list based on progress"""
+    async def _update_todos(self, state: FullState, action_description: str):
+        """Update dynamic to-do list based on progress."""
+        action_lower = action_description.lower() if action_description else ""
 
-        # Mark related todos as completed
         for todo in state.todos:
             if todo.status == 'pending':
-                # Check if this action addresses the todo
-                if any(keyword in reasoning.action.lower()
-                       for keyword in todo.task.lower().split()[:3]):  # Match key words
+                if any(keyword in action_lower for keyword in todo.task.lower().split()[:3]):
                     todo.status = 'completed'
                     todo.completed_at = datetime.utcnow()
                     print(f"[TODO] Completed: {todo.task}")
-
-                    # Send todo update
                     await self._send_dashboard_update("todo", {
                         "todos": [self._format_todo(t) for t in state.todos]
                     })
                     break
 
-        # Add new todos based on findings
-        if action_result.get('evidence'):
-            evidence = action_result['evidence']
+        # Add new todos based on evidence
+        evidence_types = {}
+        for ev in state.evidence:
+            evidence_types[ev.type] = evidence_types.get(ev.type, 0) + 1
 
-            # If we found IPs, add todo to investigate them
-            ips = [ev for ev in evidence if ev.type == 'ip']
-            if ips and not any('investigate IP' in t.task for t in state.todos):
-                new_todo = self.todo_manager.create_todo(
-                    f"Investigate suspicious IP connections ({len(ips)} found)",
-                    priority="high",
-                    rationale="New IPs discovered in analysis"
-                )
-                state.todos.append(new_todo)
-
-                await self._send_dashboard_update("todo", {
-                    "todos": [self._format_todo(t) for t in state.todos]
-                })
+        if evidence_types.get('ip', 0) > 0 and not any('investigate IP' in t.task for t in state.todos):
+            new_todo = self.todo_manager.create_todo(
+                f"Investigate suspicious IP connections ({evidence_types['ip']} found)",
+                priority="high",
+                rationale="New IPs discovered in analysis"
+            )
+            state.todos.append(new_todo)
+            await self._send_dashboard_update("todo", {
+                "todos": [self._format_todo(t) for t in state.todos]
+            })
 
     async def _complete_investigation(self, state: FullState, final_reasoning: str):
-        """Complete the investigation"""
-
-        print("\n[COMPLETE] Investigation completed")
-        print(f"Reasoning: {final_reasoning}")
+        """Complete the investigation."""
+        print(f"\n[COMPLETE] Investigation completed")
+        print(f"Reasoning: {final_reasoning[:200]}")
 
         state.status = "completed"
         state.completed_at = datetime.utcnow()
         state.current_phase = "complete"
 
-        # Mark all remaining todos as completed
         for todo in state.todos:
             if todo.status == 'pending':
                 todo.status = 'completed'
                 todo.completed_at = datetime.utcnow()
 
-        # Save final state
         self.state_manager.update_state(state.session_id, state)
 
-        # Send completion update
         await self._send_dashboard_update("complete", {
-            'message': final_reasoning,
+            'message': final_reasoning[:500],
             'total_steps': len(state.steps),
             'evidence_count': len(state.evidence),
             'threat_score': state.threat_score,
@@ -493,44 +614,8 @@ class ForensicOrchestrator:
             }
         })
 
-    def _build_context(self, state: FullState) -> Dict[str, Any]:
-        """Build context dictionary for LLM"""
-
-        # Get recent observations
-        recent_observations = []
-        for step in state.steps[-5:]:
-            if step.observation:
-                recent_observations.append(step.observation)
-
-        return {
-            'artifact_type': state.scenario.artifact_type,
-            'artifact_path': state.scenario.artifact_path,
-            'artifact_name': state.scenario.artifact_name,
-            'steps_count': len(state.steps),
-            'evidence': [format_evidence_for_display(ev) for ev in state.evidence],
-            'recent_observations': recent_observations,
-            'current_phase': state.current_phase,
-            'todos': [self._format_todo(t) for t in state.todos],
-            'threat_score': state.threat_score,
-            'confidence': state.overall_confidence
-        }
-
-    def _query_evidence(self, state: FullState, query: str) -> List[Dict[str, Any]]:
-        """Query existing evidence"""
-
-        results = []
-        query_lower = query.lower()
-
-        for evidence in state.evidence:
-            if (query_lower in evidence.value.lower() or
-                query_lower in evidence.type.lower() or
-                query_lower in evidence.source.lower()):
-                results.append(format_evidence_for_display(evidence))
-
-        return results[:10]  # Return top 10 matches
-
     def _format_todo(self, todo: TodoItem) -> Dict[str, Any]:
-        """Format todo for display"""
+        """Format todo for display."""
         return {
             'id': todo.id,
             'task': todo.task,
@@ -542,35 +627,32 @@ class ForensicOrchestrator:
         }
 
     async def _send_dashboard_update(self, update_type: str, data: Dict[str, Any]):
-        """Send update to dashboard via WebSocket"""
-
+        """Send update to dashboard via WebSocket."""
         if self.websocket_callback and self.current_session:
             payload = DashboardPayload(
                 type=update_type,
                 data=data,
                 session_id=self.current_session
             )
-
             try:
-                # mode='json' ensures datetime objects are serialized to ISO strings
                 await self.websocket_callback(payload.model_dump(mode='json'))
             except Exception as e:
                 print(f"Error sending dashboard update: {e}")
 
     async def _send_step_update(self, step: AgentStep):
-        """Send step update to dashboard"""
+        """Send step update to dashboard."""
         await self._send_dashboard_update("step", format_step_for_display(step))
 
     async def _send_evidence_update(self, evidence: Evidence):
-        """Send evidence update to dashboard"""
+        """Send evidence update to dashboard."""
         await self._send_dashboard_update("evidence", format_evidence_for_display(evidence))
 
     def get_state(self, session_id: str) -> Optional[FullState]:
-        """Get investigation state"""
+        """Get investigation state."""
         return self.state_manager.get_state(session_id)
 
     def list_sessions(self) -> List[Dict[str, Any]]:
-        """List all investigation sessions"""
+        """List all investigation sessions."""
         sessions = []
         for session_id, state in self.state_manager.states.items():
             sessions.append({
@@ -584,3 +666,42 @@ class ForensicOrchestrator:
                 'current_phase': state.current_phase
             })
         return sessions
+
+    async def chat_with_agent(self, message: str, context: Dict[str, Any]) -> str:
+        """Process a chat message using the DFIR agent."""
+        try:
+            from cai.sdk.agents import Runner
+            agent = self._get_dfir_agent()
+
+            # Build chat prompt with investigation context
+            prompt = f"""You are a forensic analyst assistant. Answer based on these investigation findings:
+
+Artifact: {context.get('artifact_name', 'unknown')} ({context.get('artifact_type', 'unknown')})
+Phase: {context.get('current_phase', 'unknown')}
+Threat Score: {context.get('threat_score', 0):.0%}
+
+Evidence ({len(context.get('evidence', []))} items):
+"""
+            for ev in context.get('evidence', [])[:10]:
+                prompt += f"  - [{ev.get('type', '?')}] {ev.get('value', 'N/A')} (threat: {ev.get('threat_score', 0):.0%})\n"
+
+            hypotheses = context.get('hypotheses', [])
+            if hypotheses:
+                prompt += "\nHypotheses:\n"
+                for h in hypotheses[:3]:
+                    prompt += f"  - {h.get('hypothesis', 'N/A')} ({h.get('severity', '?')})\n"
+
+            prompt += f"\nUSER QUESTION: {message}\n"
+            prompt += "\nProvide a clear, detailed response based on the evidence above. Use markdown formatting."
+
+            result = await Runner.run(
+                starting_agent=agent,
+                input=prompt,
+                max_turns=1,
+            )
+
+            return str(result.final_output) if result.final_output else "No response generated."
+
+        except Exception as e:
+            print(f"Chat agent error: {e}")
+            return f"I encountered an error processing your question: {str(e)}"

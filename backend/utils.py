@@ -1,258 +1,19 @@
 """
 Utility Functions for Autonomous Forensic Agent
-LLM integration, state management, MITRE mapping, and helpers
+State management, MITRE mapping, TODO management, and helpers.
+
+NOTE: LLMClient has been removed. The orchestrator now uses the
+CAI DFIR Agent via Runner.run() for all LLM interactions.
 """
 import json
 import hashlib
-import re
 from typing import List, Dict, Any, Optional
 from datetime import datetime
-import aiohttp
-import asyncio
 
 from schemas import (
-    LLMRequest, LLMResponse, ModelOutput, Evidence,
-    MITRECoverage, AttackHypothesis, TodoItem, FullState
+    ModelOutput, Evidence,
+    MITRECoverage, AttackHypothesis, TodoItem, FullState, AgentStep
 )
-
-
-# ============================================================================
-# LLM Integration
-# ============================================================================
-
-class LLMClient:
-    """Client for interacting with OpenAI-compatible LLM API"""
-
-    def __init__(self, base_url: str, api_key: str = "dummy", model: str = "gpt-4"):
-        self.base_url = base_url.rstrip('/')
-        self.api_key = api_key
-        self.model = model
-        self.max_retries = 2  # Reduced for faster response
-        self.timeout = 30  # Reduced from 60 for faster timeout
-
-    async def generate(self, request: LLMRequest) -> LLMResponse:
-        """Generate completion from LLM"""
-
-        payload = {
-            "model": self.model,
-            "messages": [
-                {"role": "system", "content": self._get_system_prompt()},
-                {"role": "user", "content": request.prompt}
-            ],
-            "max_tokens": request.max_tokens,
-            "temperature": request.temperature,
-        }
-
-        # Add JSON mode if requested
-        if request.response_format == "json":
-            payload["response_format"] = {"type": "json_object"}
-
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {self.api_key}"
-        }
-
-        for attempt in range(self.max_retries):
-            try:
-                async with aiohttp.ClientSession() as session:
-                    async with session.post(
-                        f"{self.base_url}/chat/completions",
-                        json=payload,
-                        headers=headers,
-                        timeout=aiohttp.ClientTimeout(total=self.timeout)
-                    ) as response:
-                        if response.status == 200:
-                            data = await response.json()
-                            content = data['choices'][0]['message']['content'] or ""
-
-                            # Parse JSON if requested
-                            parsed_output = None
-                            if request.response_format == "json" and content.strip():
-                                try:
-                                    parsed_json = json.loads(content)
-                                    parsed_output = ModelOutput(**parsed_json)
-                                except Exception as e:
-                                    print(f"Failed to parse JSON: {e}")
-                                    # Try to extract JSON from markdown code blocks
-                                    json_match = re.search(r'```(?:json)?\s*\n?(.*?)\n?```', content, re.DOTALL)
-                                    if json_match:
-                                        try:
-                                            parsed_json = json.loads(json_match.group(1).strip())
-                                            parsed_output = ModelOutput(**parsed_json)
-                                        except Exception as e2:
-                                            print(f"Failed to parse extracted JSON: {e2}")
-                                    # Also try to find a raw JSON object in the content
-                                    if not parsed_output:
-                                        obj_match = re.search(r'\{[^{}]*"reasoning"[^{}]*\}', content, re.DOTALL)
-                                        if obj_match:
-                                            try:
-                                                parsed_json = json.loads(obj_match.group(0))
-                                                parsed_output = ModelOutput(**parsed_json)
-                                            except Exception:
-                                                pass
-
-                            return LLMResponse(
-                                content=content,
-                                parsed_output=parsed_output,
-                                model=data.get('model', self.model),
-                                usage=data.get('usage', {}),
-                                finish_reason=data['choices'][0].get('finish_reason', 'stop')
-                            )
-                        else:
-                            error_text = await response.text()
-                            print(f"LLM API error (attempt {attempt + 1}): {response.status} - {error_text}")
-
-                            if attempt == self.max_retries - 1:
-                                raise Exception(f"LLM API failed after {self.max_retries} attempts")
-
-                            await asyncio.sleep(1)  # Quick retry
-
-            except asyncio.TimeoutError:
-                print(f"LLM request timed out (attempt {attempt + 1})")
-                if attempt == self.max_retries - 1:
-                    raise Exception(f"LLM request timed out after {self.max_retries} attempts")
-                await asyncio.sleep(1)
-
-            except Exception as e:
-                print(f"LLM request failed (attempt {attempt + 1}): {e}")
-                if attempt == self.max_retries - 1:
-                    raise
-
-                await asyncio.sleep(1)
-
-    def _get_system_prompt(self) -> str:
-        """Get system prompt for forensic agent"""
-        return """You are an expert forensic analyst AI agent performing autonomous digital forensic investigations.
-
-Your goal is to analyze forensic artifacts (memory dumps, disk images, PCAP files, etc.) by:
-1. REASONING about what to investigate next based on current evidence
-2. ACTING by executing forensic commands/tools
-3. OBSERVING the results and extracting evidence
-
-IMPORTANT GUIDELINES:
-- Use ONLY standard Linux forensic tools: volatility, strings, file, grep, tshark, etc.
-- Do NOT make up tool names or commands
-- Base your reasoning on actual evidence found, not assumptions
-- Be specific about what you're looking for and why
-- If a command fails, try alternative approaches
-- Build hypotheses progressively from evidence
-- Map findings to MITRE ATT&CK framework when relevant
-
-OUTPUT FORMAT (JSON):
-{
-    "reasoning": "Explain your thought process and why this action makes sense",
-    "action": "The exact command to execute (use real tools only)",
-    "action_type": "command|analysis|query|complete",
-    "expected_output": "What you expect to find from this action",
-    "confidence": 0.7,
-    "should_continue": true,
-    "priority": "critical|high|medium|low"
-}
-
-When investigation is complete, set action_type to "complete" and should_continue to false."""
-
-    async def generate_reasoning(self, context: Dict[str, Any]) -> ModelOutput:
-        """Generate next reasoning step"""
-
-        # Build context-aware prompt
-        prompt = self._build_reasoning_prompt(context)
-
-        request = LLMRequest(
-            prompt=prompt,
-            context=context,
-            max_tokens=1500,
-            temperature=0.7,
-            response_format="json"
-        )
-
-        response = await self.generate(request)
-
-        if response.parsed_output:
-            return response.parsed_output
-        else:
-            # Fallback if parsing failed
-            print("Warning: LLM response parsing failed, using fallback")
-            return ModelOutput(
-                reasoning="Failed to parse LLM response",
-                action="echo 'Error: Could not parse LLM output'",
-                action_type="command",
-                expected_output="Error message",
-                confidence=0.1,
-                should_continue=True,
-                priority="low"
-            )
-
-    def _build_reasoning_prompt(self, context: Dict[str, Any]) -> str:
-        """Build comprehensive prompt with investigation context"""
-
-        artifact_type = context.get('artifact_type', 'unknown')
-        artifact_path = context.get('artifact_path', 'unknown')
-        steps_taken = context.get('steps_count', 0)
-        evidence_found = context.get('evidence', [])
-        recent_observations = context.get('recent_observations', [])
-        current_phase = context.get('current_phase', 'initialization')
-        todos = context.get('todos', [])
-
-        prompt = f"""FORENSIC INVESTIGATION STATUS
-
-Artifact Type: {artifact_type}
-Artifact Path: {artifact_path}
-Investigation Phase: {current_phase}
-Steps Taken: {steps_taken}
-
-"""
-
-        # Add evidence summary
-        if evidence_found:
-            prompt += f"EVIDENCE FOUND ({len(evidence_found)} items):\n"
-            # Group by type
-            evidence_by_type = {}
-            for ev in evidence_found[-20:]:  # Last 20 pieces of evidence
-                ev_type = ev.get('type', 'unknown')
-                if ev_type not in evidence_by_type:
-                    evidence_by_type[ev_type] = []
-                evidence_by_type[ev_type].append(ev.get('value', ''))
-
-            for ev_type, values in evidence_by_type.items():
-                prompt += f"  - {ev_type}: {', '.join(values[:5])}"
-                if len(values) > 5:
-                    prompt += f" ... and {len(values) - 5} more"
-                prompt += "\n"
-        else:
-            prompt += "EVIDENCE FOUND: None yet\n"
-
-        # Add recent observations
-        if recent_observations:
-            prompt += f"\nRECENT OBSERVATIONS:\n"
-            for obs in recent_observations[-3:]:
-                prompt += f"  - {obs}\n"
-
-        # Add pending todos
-        pending_todos = [t for t in todos if t.get('status') == 'pending']
-        if pending_todos:
-            prompt += f"\nPENDING TASKS:\n"
-            for todo in pending_todos[:5]:
-                prompt += f"  - [{todo.get('priority', 'medium')}] {todo.get('task', '')}\n"
-
-        # Add phase-specific guidance
-        phase_guidance = {
-            'initialization': 'Start with basic artifact identification and metadata extraction',
-            'initial_analysis': 'Perform broad analysis to understand artifact contents',
-            'deep_analysis': 'Focus on suspicious findings and extract detailed evidence',
-            'threat_hunting': 'Hunt for specific indicators of compromise',
-            'correlation': 'Connect evidence pieces and build attack timeline',
-            'finalization': 'Summarize findings and complete investigation'
-        }
-
-        guidance = phase_guidance.get(current_phase, 'Continue investigation')
-        prompt += f"\nPHASE GUIDANCE: {guidance}\n"
-
-        prompt += """\n\nBased on the above context, determine the NEXT BEST ACTION to take.
-Respond in JSON format with your reasoning and the exact command to execute.
-Use ONLY real forensic tools (volatility, strings, grep, tshark, etc).
-Be specific and goal-oriented."""
-
-        return prompt
 
 
 # ============================================================================
@@ -518,6 +279,14 @@ class TodoManager:
                 self.create_todo("Extract logon/logoff events", priority="medium"),
             ])
 
+        # General fallback tasks for unknown/binary/archive types
+        else:
+            todos.extend([
+                self.create_todo("Extract strings and inspect for IOCs", priority="high"),
+                self.create_todo("Check for embedded files and metadata", priority="high"),
+                self.create_todo("Hash the artifact for reputation lookup", priority="medium"),
+            ])
+
         # Final tasks
         todos.append(self.create_todo(
             "Correlate findings and build attack timeline",
@@ -584,14 +353,14 @@ def format_evidence_for_display(evidence: Evidence) -> Dict[str, Any]:
     }
 
 
-def format_step_for_display(step: 'AgentStep') -> Dict[str, Any]:
+def format_step_for_display(step: AgentStep) -> Dict[str, Any]:
     """Format agent step for dashboard display"""
     return {
         'step_number': step.step_number,
         'phase': step.phase,
-        'reasoning': step.reasoning,
-        'action': step.action,
-        'observation': step.observation,
+        'reasoning': step.reasoning or f"Analysis step {step.step_number}",
+        'action': step.action or "Forensic analysis",
+        'observation': step.observation or "",
         'confidence': step.confidence,
         'evidence_count': len(step.evidence_found),
         'timestamp': step.timestamp.isoformat(),

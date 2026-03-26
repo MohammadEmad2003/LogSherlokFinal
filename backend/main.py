@@ -1,6 +1,9 @@
 """
 Autonomous Forensic Orchestrator - FastAPI Backend
 Main application entry point
+
+Uses the CAI DFIR Agent for investigation. The orchestrator calls
+Runner.run(dfir_agent) for each investigation step.
 """
 from __future__ import annotations
 
@@ -15,6 +18,7 @@ from typing import Optional, Dict, Any, List
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
+sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -22,7 +26,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse, HTMLResponse, Response
 from pydantic import BaseModel
 
-# Import services - only session and websocket managers (no mock agent)
+# Import services
 try:
     from backend.services.session_manager import SessionManager, session_manager
     from backend.services.websocket_manager import WebSocketManager, ws_manager
@@ -57,21 +61,38 @@ except ImportError:
 from sqlalchemy.orm import Session
 from fastapi import Depends, Request
 
-# Import autonomous agent components
+# Import autonomous agent components (simplified - no more LLMClient)
 try:
     from backend.orchestrator import ForensicOrchestrator
-    from backend.utils import LLMClient, LLMRequest
     from backend.schemas import UploadArtifactRequest, ChatRequest as AgentChatRequest
     from backend.tools import ALLOWED_TOOLS
 except ImportError:
     from orchestrator import ForensicOrchestrator
-    from utils import LLMClient, LLMRequest
     from schemas import UploadArtifactRequest, ChatRequest as AgentChatRequest
     from tools import ALLOWED_TOOLS
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+# ============================================================================
+# Environment setup for CAI SDK
+# ============================================================================
+# The CAI SDK uses OPENAI_BASE_URL and OPENAI_API_KEY env vars.
+# Map legacy LLM_BASE_URL to OPENAI_BASE_URL if needed.
+if os.getenv("LLM_BASE_URL") and not os.getenv("OPENAI_BASE_URL"):
+    os.environ["OPENAI_BASE_URL"] = os.getenv("LLM_BASE_URL")
+    logger.info(f"Mapped LLM_BASE_URL to OPENAI_BASE_URL: {os.getenv('OPENAI_BASE_URL')}")
+
+if os.getenv("LLM_API_KEY") and not os.getenv("OPENAI_API_KEY"):
+    os.environ["OPENAI_API_KEY"] = os.getenv("LLM_API_KEY", "dummy")
+
+# Ensure OPENAI_API_KEY is set (CAI SDK requires it)
+if not os.getenv("OPENAI_API_KEY"):
+    os.environ["OPENAI_API_KEY"] = "dummy"
+
+LLM_BASE_URL = os.getenv("OPENAI_BASE_URL", "not set")
+logger.info(f"CAI SDK will use OPENAI_BASE_URL: {LLM_BASE_URL}")
 
 # Create FastAPI app
 app = FastAPI(
@@ -105,16 +126,8 @@ logger.info(f"UI directory: {UI_DIR}")
 logger.info(f"Upload directory: {UPLOAD_DIR}")
 
 # ============================================================================
-# Initialize Autonomous Agent Components
+# Initialize Autonomous Agent Components (No more LLMClient)
 # ============================================================================
-
-# Initialize LLM Client with ngrok endpoint
-LLM_BASE_URL = os.getenv("LLM_BASE_URL", "https://5d0d-196-157-106-114.ngrok-free.app/v1")
-LLM_API_KEY = os.getenv("LLM_API_KEY", "dummy")
-LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4")
-
-logger.info(f"Initializing LLM Client with base URL: {LLM_BASE_URL}")
-llm_client = LLMClient(base_url=LLM_BASE_URL, api_key=LLM_API_KEY, model=LLM_MODEL)
 
 # Global orchestrator instance
 orchestrator: Optional[ForensicOrchestrator] = None
@@ -125,7 +138,6 @@ def get_orchestrator() -> ForensicOrchestrator:
     global orchestrator
     if orchestrator is None:
         orchestrator = ForensicOrchestrator(
-            llm_client=llm_client,
             websocket_callback=None,
             max_steps=50
         )
@@ -531,7 +543,7 @@ async def upload_artefact(
 
 @app.post("/chat", response_model=ChatResponse)
 async def chat(message: ChatMessage):
-    """Send a message to the forensic agent - uses REAL LLM."""
+    """Send a message to the forensic agent - uses CAI DFIR Agent."""
     session = session_manager.get_session(message.session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -543,8 +555,8 @@ async def chat(message: ChatMessage):
     # Build context from real investigation state
     context = _build_chat_context(state, session)
 
-    # Process query with real LLM
-    response = await process_agent_query(message.message, context)
+    # Process query with DFIR agent
+    response = await orch.chat_with_agent(message.message, context)
 
     # Also broadcast to WebSocket
     await ws_manager.broadcast(message.session_id, {
@@ -778,7 +790,7 @@ async def get_agent_state(session_id: str):
 
 
 # ============================================================================
-# Real LLM-Powered Chat Query Processing
+# Chat Context Building
 # ============================================================================
 
 def _build_chat_context(state, session: dict) -> Dict[str, Any]:
@@ -836,187 +848,6 @@ def _build_chat_context(state, session: dict) -> Dict[str, Any]:
         context["current_phase"] = state.current_phase
 
     return context
-
-
-async def process_agent_query(query: str, context: Dict[str, Any]) -> str:
-    """Process chat query using REAL LLM - no mock responses."""
-
-    # Build comprehensive prompt for the LLM
-    prompt = f"""You are a forensic analyst assistant. Answer questions about the current investigation based on the evidence and analysis provided.
-
-INVESTIGATION CONTEXT:
-- Artifact: {context.get('artifact_name', 'unknown')} ({context.get('artifact_type', 'unknown')})
-- Current Phase: {context.get('current_phase', 'unknown')}
-- Threat Score: {context.get('threat_score', 0):.2f}
-
-EVIDENCE COLLECTED ({len(context.get('evidence', []))} items):
-"""
-
-    # Add evidence summary by type
-    evidence_by_type = {}
-    for ev in context.get('evidence', []):
-        ev_type = ev.get('type', 'unknown')
-        if ev_type not in evidence_by_type:
-            evidence_by_type[ev_type] = []
-        evidence_by_type[ev_type].append(ev)
-
-    for ev_type, items in evidence_by_type.items():
-        prompt += f"\n{ev_type.upper()} ({len(items)} items):\n"
-        for item in items[:5]:
-            prompt += f"  - {item.get('value', 'N/A')} (confidence: {item.get('confidence', 0):.0%}, threat: {item.get('threat_score', 0):.0%})\n"
-        if len(items) > 5:
-            prompt += f"  ... and {len(items) - 5} more\n"
-
-    # Add MITRE coverage
-    mitre = context.get('mitre', {})
-    if mitre.get('tactics'):
-        prompt += f"\nMITRE ATT&CK TACTICS: {', '.join(mitre['tactics'].keys())}\n"
-    if mitre.get('techniques'):
-        prompt += f"MITRE TECHNIQUES: {', '.join(list(mitre['techniques'].keys())[:10])}\n"
-
-    # Add hypotheses
-    hypotheses = context.get('hypotheses', [])
-    if hypotheses:
-        prompt += f"\nATTACK HYPOTHESES:\n"
-        for h in hypotheses[:3]:
-            prompt += f"  - {h.get('hypothesis', 'N/A')} (confidence: {h.get('confidence', 0):.0%}, severity: {h.get('severity', 'unknown')})\n"
-
-    # Add recent analysis steps
-    steps = context.get('steps', [])
-    if steps:
-        prompt += f"\nRECENT ANALYSIS STEPS ({len(steps)} total):\n"
-        for step in steps[-5:]:
-            prompt += f"  Step {step.get('step_number', '?')}: {step.get('action', 'N/A')}\n"
-            if step.get('observation'):
-                prompt += f"    Result: {step.get('observation', '')[:100]}...\n"
-
-    prompt += f"""
-USER QUESTION: {query}
-
-Provide a detailed, accurate response based ONLY on the evidence and analysis shown above.
-If information is not available, clearly state that.
-Format your response with markdown for readability.
-Be specific about file names, IP addresses, processes, and techniques when discussing findings.
-"""
-
-    try:
-        # Make REAL LLM call
-        request = LLMRequest(
-            prompt=prompt,
-            context=context,
-            max_tokens=1500,
-            temperature=0.3,
-            response_format="text"
-        )
-
-        response = await llm_client.generate(request)
-        return response.content
-
-    except Exception as e:
-        logger.error(f"LLM query failed: {e}")
-        # Fallback to context-based response if LLM fails
-        return _generate_fallback_response(query, context)
-
-
-def _generate_fallback_response(query: str, context: Dict[str, Any]) -> str:
-    """Generate response from context when LLM is unavailable."""
-    query_lower = query.lower()
-    evidence = context.get('evidence', [])
-
-    # Group evidence by type
-    evidence_by_type = {}
-    for ev in evidence:
-        ev_type = ev.get('type', 'unknown')
-        if ev_type not in evidence_by_type:
-            evidence_by_type[ev_type] = []
-        evidence_by_type[ev_type].append(ev)
-
-    response = "**Analysis Based on Collected Evidence**\n\n"
-
-    if 'malicious' in query_lower or 'malware' in query_lower or 'threat' in query_lower:
-        response += f"**Threat Assessment**\n"
-        response += f"- Overall Threat Score: {context.get('threat_score', 0):.0%}\n"
-        response += f"- Evidence Items: {len(evidence)}\n\n"
-
-        # Show high-threat evidence
-        high_threat = [e for e in evidence if e.get('threat_score', 0) > 0.7]
-        if high_threat:
-            response += "**High-Threat Indicators:**\n"
-            for ev in high_threat[:5]:
-                response += f"- [{ev['type']}] `{ev['value']}` (threat: {ev.get('threat_score', 0):.0%})\n"
-
-    elif 'persistence' in query_lower:
-        response += "**Persistence Analysis**\n"
-        registry = evidence_by_type.get('registry_key', [])
-        if registry:
-            response += f"Found {len(registry)} registry modifications:\n"
-            for r in registry[:5]:
-                response += f"- `{r['value']}`\n"
-        else:
-            response += "No persistence mechanisms detected yet.\n"
-
-    elif 'ip' in query_lower or 'network' in query_lower or 'c2' in query_lower:
-        response += "**Network Analysis**\n"
-        ips = evidence_by_type.get('ip', [])
-        domains = evidence_by_type.get('domain', [])
-        if ips:
-            response += f"Found {len(ips)} IP addresses:\n"
-            for ip in ips[:5]:
-                response += f"- `{ip['value']}` (threat: {ip.get('threat_score', 0):.0%})\n"
-        if domains:
-            response += f"\nFound {len(domains)} domains:\n"
-            for d in domains[:5]:
-                response += f"- `{d['value']}`\n"
-
-    elif 'process' in query_lower:
-        response += "**Process Analysis**\n"
-        procs = evidence_by_type.get('process', [])
-        if procs:
-            response += f"Found {len(procs)} suspicious processes:\n"
-            for p in procs[:10]:
-                response += f"- `{p['value']}`\n"
-        else:
-            response += "No suspicious processes detected yet.\n"
-
-    elif 'file' in query_lower or 'corrupt' in query_lower:
-        response += "**File Analysis**\n"
-        files = evidence_by_type.get('file_path', []) + evidence_by_type.get('file', [])
-        if files:
-            response += f"Found {len(files)} files of interest:\n"
-            for f in files[:10]:
-                response += f"- `{f['value']}`\n"
-        else:
-            response += "No suspicious files detected yet.\n"
-
-    elif 'hash' in query_lower or 'ioc' in query_lower:
-        response += "**Indicators of Compromise**\n"
-        for ioc_type in ['md5', 'sha1', 'sha256', 'hash']:
-            iocs = evidence_by_type.get(ioc_type, [])
-            if iocs:
-                response += f"\n{ioc_type.upper()} ({len(iocs)}):\n"
-                for ioc in iocs[:5]:
-                    response += f"- `{ioc['value']}`\n"
-
-    else:
-        # General summary
-        response += f"**Investigation Summary**\n"
-        response += f"- Phase: {context.get('current_phase', 'unknown')}\n"
-        response += f"- Total Evidence: {len(evidence)}\n"
-        response += f"- Threat Score: {context.get('threat_score', 0):.0%}\n\n"
-
-        response += "**Evidence Breakdown:**\n"
-        for ev_type, items in sorted(evidence_by_type.items(), key=lambda x: -len(x[1])):
-            response += f"- {ev_type}: {len(items)} items\n"
-
-        response += "\n**Available Queries:**\n"
-        response += "- What malicious activity was found?\n"
-        response += "- What persistence mechanisms were used?\n"
-        response += "- Show network/IP connections\n"
-        response += "- List suspicious processes\n"
-        response += "- Show file analysis\n"
-        response += "- List IOCs/hashes\n"
-
-    return response
 
 
 def _generate_real_report(state, format: str) -> Dict[str, Any]:
@@ -1081,7 +912,7 @@ def _generate_real_report(state, format: str) -> Dict[str, Any]:
 
 
 # ============================================================================
-# WebSocket Endpoint - REAL Agent Only
+# WebSocket Endpoint - DFIR Agent
 # ============================================================================
 
 @app.websocket("/ws/agent/{session_id}")
@@ -1138,7 +969,7 @@ async def websocket_agent(websocket: WebSocket, session_id: str):
                 if data.get("type") == "llm_query":
                     state = orch.get_state(session_id)
                     context = _build_chat_context(state, session)
-                    response = await process_agent_query(data.get("message", ""), context)
+                    response = await orch.chat_with_agent(data.get("message", ""), context)
 
                     await ws_manager.send_to_session(session_id, {
                         "type": "llm_response",
@@ -1210,7 +1041,7 @@ async def health_check():
         "status": "healthy",
         "timestamp": datetime.utcnow().isoformat(),
         "active_sessions": len(orch.list_sessions()),
-        "llm_endpoint": LLM_BASE_URL,
+        "llm_endpoint": os.getenv("OPENAI_BASE_URL", "not set"),
     }
 
 
@@ -1218,11 +1049,11 @@ if __name__ == "__main__":
     import uvicorn
     print("\n" + "="*60)
     print("  Autonomous Forensic Orchestrator v2.0")
-    print("  NO MOCK DATA - Real LLM Integration")
+    print("  CAI DFIR Agent Integration")
     print("="*60)
     print(f"\n  UI:   http://localhost:8000")
     print(f"  API:  http://localhost:8000/docs")
-    print(f"  LLM:  {LLM_BASE_URL}")
+    print(f"  LLM:  {os.getenv('OPENAI_BASE_URL', 'not set')}")
     print("\n" + "="*60 + "\n")
 
     uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")
