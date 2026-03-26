@@ -389,6 +389,9 @@ function handleMessage(message) {
         case "full_state":
             handleFullState(message.data);
             break;
+        case "terminal_log":
+            handleTerminalLog(message.data);
+            break;
     }
 }
 
@@ -402,8 +405,10 @@ function handleEvidence(ev) {
 
     // Create evidence card with enhanced features
     const evCard = document.createElement("div");
-    evCard.className = `evidence-card type-${ev.type}`;
-    const confidence = (ev.confidence * 100).toFixed(0);
+    const evType = ev.type || "unknown";
+    const evValue = ev.value || "N/A";
+    evCard.className = `evidence-card type-${evType}`;
+    const confidence = ((ev.confidence || 0) * 100).toFixed(0);
     const threatScore = (ev.threat_score || ev.confidence || 0.5) * 100;
     const threatLevel =
         threatScore > 75
@@ -416,15 +421,15 @@ function handleEvidence(ev) {
 
     evCard.innerHTML = `
         <div class="evidence-header">
-            <div class="evidence-type">${ev.type}</div>
-            <button class="copy-btn" onclick="copyToClipboard('${ev.value.replace(/'/g, "\\'")}', event)" title="Copy to clipboard">
+            <div class="evidence-type">${evType}</div>
+            <button class="copy-btn" onclick="copyToClipboard('${evValue.replace(/'/g, "\\'")}', event)" title="Copy to clipboard">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
                     <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
                     <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
                 </svg>
             </button>
         </div>
-        <div class="evidence-value" title="${ev.value}">${truncate(ev.value, 50)}</div>
+        <div class="evidence-value" title="${evValue}">${truncate(evValue, 50)}</div>
         <div class="threat-bar">
             <div class="threat-label">Threat: <span class="threat-level ${threatLevel}">${threatLevel.toUpperCase()}</span></div>
             <div class="threat-indicator">
@@ -439,8 +444,8 @@ function handleEvidence(ev) {
             <span>${confidence}%</span>
         </div>
         <div class="evidence-tooltip">
-            <strong>Type:</strong> ${ev.type}<br>
-            <strong>Value:</strong> ${ev.value}<br>
+            <strong>Type:</strong> ${evType}<br>
+            <strong>Value:</strong> ${evValue}<br>
             <strong>Confidence:</strong> ${confidence}%<br>
             <strong>Threat Score:</strong> ${threatScore.toFixed(0)}%<br>
             ${ev.source ? `<strong>Source:</strong> ${ev.source}<br>` : ""}
@@ -494,7 +499,7 @@ function handleTimelineEvent(event) {
         <div class="timeline-time">${time}</div>
         <div class="timeline-content">
             <span class="timeline-severity ${event.severity || "info"}">${(event.severity || "INFO").toUpperCase()}</span>
-            <span class="timeline-description">${event.event}</span>
+            <span class="timeline-description">${event.event || event.description || "Event"}</span>
         </div>
     `;
 
@@ -550,57 +555,29 @@ function handleHypothesis(hypothesis) {
     const emptyState = hypothesesList.querySelector(".empty-state");
     if (emptyState) emptyState.remove();
 
-    const confidence = (hypothesis.confidence * 100).toFixed(0);
-    const confClass = confidence >= 80 ? "high" : "medium";
+    const confidence = ((hypothesis.confidence || 0) * 100).toFixed(0);
+    const confClass = confidence >= 80 ? "high" : confidence >= 50 ? "medium" : "low";
+    const severityClass = hypothesis.severity || "medium";
 
     const hypCard = document.createElement("div");
     hypCard.className = "hypothesis-card";
     hypCard.innerHTML = `
         <div class="hypothesis-title">
-            ${hypothesis.title}
+            ${hypothesis.hypothesis || hypothesis.title || "Untitled Hypothesis"}
             <span class="hypothesis-confidence ${confClass}">${confidence}%</span>
         </div>
         <div class="hypothesis-details">
-            <strong>Threat Actor:</strong> ${hypothesis.threat_actor || "Unknown"}<br>
-            <strong>Objective:</strong> ${hypothesis.objective || "Unknown"}
+            <strong>Severity:</strong> <span class="threat-level ${severityClass}">${(hypothesis.severity || "medium").toUpperCase()}</span><br>
+            ${hypothesis.supporting_evidence && hypothesis.supporting_evidence.length > 0 
+                ? `<strong>Evidence:</strong> ${hypothesis.supporting_evidence.slice(0, 3).join(", ")}` 
+                : ""}
         </div>
     `;
 
     hypothesesList.appendChild(hypCard);
 }
 
-function handleComplete(data) {
-    progressPhase.textContent = "Investigation Complete";
-    progressPercent.textContent = "100%";
-    progressFill.style.width = "100%";
-
-    summaryContent.innerHTML = `
-        <div class="summary-stats">
-            <div class="summary-stat">
-                <span class="stat-value">${steps.length}</span>
-                <span class="stat-label">Analysis Steps</span>
-            </div>
-            <div class="summary-stat">
-                <span class="stat-value">${evidence.length}</span>
-                <span class="stat-label">Evidence Items</span>
-            </div>
-            <div class="summary-stat">
-                <span class="stat-value">${Object.values(mitreTechniques).flat().length}</span>
-                <span class="stat-label">MITRE Techniques</span>
-            </div>
-            <div class="summary-stat">
-                <span class="stat-value">${hypotheses.length}</span>
-                <span class="stat-label">Hypotheses</span>
-            </div>
-        </div>
-        <h3>Executive Summary</h3>
-        <pre class="summary-text">${data.summary}</pre>
-        <h3>Conclusion</h3>
-        <p class="conclusion-text">${data.conclusion}</p>
-    `;
-
-    summaryModal.classList.add("active");
-}
+// handleComplete defined below in the unified section
 
 function handleError(data) {
     console.error("Investigation error:", data.message);
@@ -724,6 +701,9 @@ function populateNetworkFromEvidence() {
 function addEvidenceNode(ev) {
     if (!networkNodes) return;
 
+    const evType = ev.type || "unknown";
+    const evValue = ev.value || "N/A";
+
     const nodeColors = {
         ip: { background: "#ef4444", border: "#dc2626" },
         domain: { background: "#f97316", border: "#ea580c" },
@@ -736,8 +716,8 @@ function addEvidenceNode(ev) {
         url: { background: "#ec4899", border: "#db2777" },
     };
 
-    const nodeId = `${ev.type}-${ev.value}`;
-    const color = nodeColors[ev.type] || {
+    const nodeId = `${evType}-${evValue}`;
+    const color = nodeColors[evType] || {
         background: "#6b7280",
         border: "#4b5563",
     };
@@ -749,10 +729,10 @@ function addEvidenceNode(ev) {
     if (!networkNodes.get(nodeId)) {
         networkNodes.add({
             id: nodeId,
-            label: truncate(ev.value, 25),
-            title: `<strong>${ev.type.toUpperCase()}</strong><br>${ev.value}<br>Confidence: ${(ev.confidence * 100).toFixed(0)}%`,
+            label: truncate(evValue, 25),
+            title: `<strong>${evType.toUpperCase()}</strong><br>${evValue}<br>Confidence: ${((ev.confidence || 0) * 100).toFixed(0)}%`,
             color: color,
-            group: ev.type,
+            group: evType,
             size: nodeSize,
             font: { size: 10, color: "#f3f4f6" },
         });
@@ -780,18 +760,20 @@ function createEvidenceConnections() {
     // Create tool nodes and connect evidence
     const toolNodes = {};
     steps.forEach((step) => {
-        const toolNodeId = `tool-${step.tool}`;
+        if (!step.tool) return;
+        const toolName = step.tool;
+        const toolNodeId = `tool-${toolName}`;
         if (
-            !toolNodes[step.tool] &&
+            !toolNodes[toolName] &&
             step.evidence &&
             step.evidence.length > 0
         ) {
-            toolNodes[step.tool] = true;
+            toolNodes[toolName] = true;
             if (!networkNodes.get(toolNodeId)) {
                 networkNodes.add({
                     id: toolNodeId,
-                    label: step.tool,
-                    title: `Tool: ${step.tool}<br>Category: ${step.tool_category}`,
+                    label: toolName,
+                    title: `Tool: ${toolName}<br>Category: ${step.tool_category || "Analysis"}`,
                     color: { background: "#10b981", border: "#059669" },
                     shape: "box",
                     size: 20,
@@ -810,7 +792,9 @@ function createEvidenceConnections() {
 
             // Connect evidence to tool
             step.evidence.forEach((ev) => {
-                const nodeId = `${ev.type}-${ev.value}`;
+                const evType = ev.type || "unknown";
+                const evValue = ev.value || "N/A";
+                const nodeId = `${evType}-${evValue}`;
                 const edgeId = `${toolNodeId}-${nodeId}`;
                 if (networkNodes.get(nodeId) && !networkEdges.get(edgeId)) {
                     networkEdges.add({
@@ -841,7 +825,9 @@ function createEvidenceConnections() {
     const commands = evidenceByType["command"] || [];
 
     processes.forEach((proc) => {
+        if (!proc.value) return;
         commands.forEach((cmd) => {
+            if (!cmd.value) return;
             if (
                 cmd.value
                     .toLowerCase()
@@ -888,13 +874,14 @@ function addToNetworkGraph(ev, step = null) {
     if (!nodeId) return;
 
     // Add edge from step's tool if available
-    if (step) {
-        const toolNodeId = `tool-${step.tool}`;
+    if (step && step.tool) {
+        const toolName = step.tool || "Unknown Tool";
+        const toolNodeId = `tool-${toolName}`;
         if (!networkNodes.get(toolNodeId)) {
             networkNodes.add({
                 id: toolNodeId,
-                label: step.tool,
-                title: `Tool: ${step.tool}`,
+                label: toolName,
+                title: `Tool: ${toolName}`,
                 color: { background: "#10b981", border: "#059669" },
                 shape: "box",
                 size: 20,
@@ -919,7 +906,7 @@ function addToNetworkGraph(ev, step = null) {
                 id: edgeId,
                 from: toolNodeId,
                 to: nodeId,
-                title: `Discovered by ${step.tool}`,
+                title: `Discovered by ${toolName}`,
                 color: { color: "#6b7280" },
                 width: 1,
             });
@@ -1370,6 +1357,23 @@ function sendChatMessage() {
 
     addChatMessage("user", message);
 
+    // Show thinking indicator
+    const thinkingEl = document.createElement("div");
+    thinkingEl.className = "chat-message agent thinking-indicator";
+    thinkingEl.id = "chat-thinking";
+    thinkingEl.innerHTML = `
+        <div class="chat-avatar ai">
+            <svg viewBox="0 0 24 24" fill="currentColor">
+                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/>
+            </svg>
+        </div>
+        <div class="chat-content">
+            <p class="thinking-dots">Analyzing<span class="dot-1">.</span><span class="dot-2">.</span><span class="dot-3">.</span></p>
+        </div>
+    `;
+    chatMessages.appendChild(thinkingEl);
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+
     // Send to backend for LLM processing
     if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(
@@ -1621,7 +1625,7 @@ async function generatePDFReport() {
             }
             doc.setTextColor(0, 0, 0);
             doc.text(
-                `${idx + 1}. ${hyp.title} (${(hyp.confidence * 100).toFixed(0)}% confidence)`,
+                `${idx + 1}. ${hyp.title || "Untitled"} (${((hyp.confidence || 0) * 100).toFixed(0)}% confidence)`,
                 25,
                 y,
             );
@@ -1751,47 +1755,51 @@ async function downloadReport(format) {
 // ============================================================================
 
 function showStepDetail(step) {
+    const confidencePct = ((step.confidence || 0) * 100).toFixed(0);
+    const evidenceItems = step.evidence || [];
+    const mitreTactics = step.mitre_tactics || [];
+    const mitreTechs = step.mitre_techniques || [];
+
     stepDetailContent.innerHTML = `
         <div class="step-detail-section">
-            <h3>Step ${step.step_number} - ${step.tool}</h3>
-            <p><strong>Phase:</strong> ${step.phase}</p>
-            <p><strong>Category:</strong> ${step.tool_category}</p>
-            <p><strong>Duration:</strong> ${step.duration_ms}ms</p>
+            <h3>Step ${step.step_number || "?"} — ${step.tool || "DFIR Agent"}</h3>
+            <p><strong>Phase:</strong> ${formatPhase(step.phase)}</p>
+            <p><strong>Category:</strong> ${step.tool_category || "Analysis"}</p>
+            <p><strong>Confidence:</strong> ${confidencePct}%</p>
+            ${step.error ? `<p style="color: #ef4444;"><strong>Error:</strong> ${step.error}</p>` : ""}
         </div>
 
         <div class="step-detail-section">
-            <h3>Thought Process</h3>
-            <p>${step.thought}</p>
+            <h3>🧠 Agent Reasoning</h3>
+            <p>${step.reasoning || step.thought || "No reasoning recorded"}</p>
         </div>
 
         <div class="step-detail-section">
-            <h3>Action Taken</h3>
-            <p>${step.action}</p>
+            <h3>⚡ Command / Action</h3>
+            <pre style="background: #1a1a2e; padding: 12px; border-radius: 8px; color: #00d4ff; font-size: 13px; overflow-x: auto;">${step.command || step.action || "No command"}</pre>
         </div>
 
         <div class="step-detail-section">
-            <h3>Input</h3>
-            <pre>${JSON.stringify(step.input, null, 2)}</pre>
+            <h3>📋 Observation / Result</h3>
+            <pre style="background: #1a1a2e; padding: 12px; border-radius: 8px; color: #e0e0e0; font-size: 12px; max-height: 300px; overflow-y: auto; white-space: pre-wrap;">${step.observation || "No observation recorded"}</pre>
         </div>
 
         <div class="step-detail-section">
-            <h3>Output</h3>
-            <pre>${JSON.stringify(step.output, null, 2)}</pre>
-        </div>
-
-        <div class="step-detail-section">
-            <h3>Evidence Extracted (${step.evidence?.length || 0})</h3>
+            <h3>🔍 Evidence Extracted (${evidenceItems.length || step.evidence_count || 0})</h3>
             ${
-                step.evidence?.length > 0
-                    ? `<ul>${step.evidence.map((e) => `<li><strong>${e.type}:</strong> ${e.value} (${(e.confidence * 100).toFixed(0)}% confidence)</li>`).join("")}</ul>`
-                    : "<p>No evidence extracted</p>"
+                evidenceItems.length > 0
+                    ? `<ul>${evidenceItems.map((e) => `<li><strong>${e.type}:</strong> ${e.value} (${((e.confidence || 0) * 100).toFixed(0)}% confidence)</li>`).join("")}</ul>`
+                    : `<p>${step.evidence_count > 0 ? step.evidence_count + " items extracted" : "No evidence extracted"}</p>`
             }
         </div>
 
+        ${mitreTactics.length > 0 || mitreTechs.length > 0 ? `
         <div class="step-detail-section">
-            <h3>Next Step Reasoning</h3>
-            <p>${step.next_step_reasoning}</p>
+            <h3>🛡️ MITRE ATT&CK</h3>
+            ${mitreTactics.length > 0 ? `<p><strong>Tactics:</strong> ${mitreTactics.join(", ")}</p>` : ""}
+            ${mitreTechs.length > 0 ? `<p><strong>Techniques:</strong> ${mitreTechs.map(t => `<span class="technique-badge">${t}</span>`).join(" ")}</p>` : ""}
         </div>
+        ` : ""}
     `;
 
     stepModal.classList.add("active");
@@ -2220,18 +2228,32 @@ function handleStep(step) {
     const emptyState = stepsFeed.querySelector(".empty-state");
     if (emptyState) emptyState.remove();
 
-    // Create step card
+    // Use correct field names with safe fallbacks
+    const stepNum = step.step_number || steps.length;
+    const toolName = step.tool || "DFIR Agent";
+    const phase = step.phase || "analysis";
+    const reasoning = step.reasoning || step.thought || "Analyzing...";
+    const action = step.action || "Processing";
+    const command = step.command || action;
+    const evidenceCount = step.evidence_count || (step.evidence ? step.evidence.length : 0);
+    const confidencePct = ((step.confidence || 0) * 100).toFixed(0);
+    const actionType = step.action_type || "analysis";
+
+    // Create step card with rich information
     const stepCard = document.createElement("div");
-    stepCard.className = "step-card";
+    stepCard.className = `step-card ${actionType === "command" ? "step-command" : "step-analysis"}`;
     stepCard.innerHTML = `
         <div class="step-header">
-            <span class="step-number">${step.step_number}</span>
-            <span class="step-tool">${step.tool}</span>
-            <span class="step-phase">${step.phase}</span>
+            <span class="step-number">${stepNum}</span>
+            <span class="step-tool">${toolName}</span>
+            <span class="step-phase">${formatPhase(phase)}</span>
         </div>
-        <p class="step-thought">${truncate(step.thought, 150)}</p>
-        <p class="step-action">${truncate(step.action, 100)}</p>
-        <p class="step-evidence-count">${step.evidence?.length || 0} evidence items extracted</p>
+        <p class="step-thought">${truncate(reasoning, 200)}</p>
+        ${actionType === "command" ? `<pre class="step-command-display">${truncate(command, 150)}</pre>` : `<p class="step-action">${truncate(action, 150)}</p>`}
+        <div class="step-footer">
+            <span class="step-evidence-count">${evidenceCount} evidence items</span>
+            <span class="step-confidence" title="Confidence">⚡ ${confidencePct}%</span>
+        </div>
     `;
 
     stepCard.addEventListener("click", () => showStepDetail(step));
@@ -2241,9 +2263,35 @@ function handleStep(step) {
     // Play sound
     playSound("step");
 
-    // Update network graph
-    if (step.evidence) {
+    // Update network graph with step evidence
+    if (step.evidence && step.evidence.length > 0) {
         step.evidence.forEach((ev) => addToNetworkGraph(ev, step));
+    }
+
+    // Dispatch MITRE mappings from step evidence
+    if (step.mitre_tactics && step.mitre_techniques) {
+        for (let i = 0; i < step.mitre_techniques.length; i++) {
+            const tactic = step.mitre_tactics[i] || step.mitre_tactics[0] || "unknown";
+            handleMitreMapping({
+                tactic: tactic,
+                technique_id: step.mitre_techniques[i],
+            });
+        }
+    }
+
+    // Update progress from step data
+    if (step.phase) {
+        const phaseProgress = {
+            'initialization': 5,
+            'initial_analysis': 20,
+            'deep_analysis': 40,
+            'threat_hunting': 60,
+            'correlation': 80,
+            'finalization': 95,
+            'complete': 100,
+        };
+        const progress = phaseProgress[step.phase] || Math.min((steps.length / 50) * 100, 95);
+        handleProgress({ progress: progress, phase: step.phase });
     }
 
     // Update charts
@@ -2261,18 +2309,20 @@ function handleComplete(data) {
     // Play completion sound
     playSound("complete");
 
+    const totalMitre = Object.values(mitreTechniques).flat().length;
+
     summaryContent.innerHTML = `
         <div class="summary-stats">
             <div class="summary-stat">
-                <span class="stat-value">${steps.length}</span>
+                <span class="stat-value">${data.total_steps || steps.length}</span>
                 <span class="stat-label">Analysis Steps</span>
             </div>
             <div class="summary-stat">
-                <span class="stat-value">${evidence.length}</span>
+                <span class="stat-value">${data.evidence_count || evidence.length}</span>
                 <span class="stat-label">Evidence Items</span>
             </div>
             <div class="summary-stat">
-                <span class="stat-value">${Object.values(mitreTechniques).flat().length}</span>
+                <span class="stat-value">${data.mitre_coverage ? (data.mitre_coverage.techniques || totalMitre) : totalMitre}</span>
                 <span class="stat-label">MITRE Techniques</span>
             </div>
             <div class="summary-stat">
@@ -2280,10 +2330,17 @@ function handleComplete(data) {
                 <span class="stat-label">Hypotheses</span>
             </div>
         </div>
+        <h3>Threat Score</h3>
+        <div class="threat-bar" style="margin-bottom:16px">
+            <div class="threat-indicator" style="height:12px;border-radius:6px;background:#1e293b">
+                <div class="threat-fill ${(data.threat_score||0) > 0.7 ? 'critical' : (data.threat_score||0) > 0.4 ? 'high' : 'medium'}" style="width: ${((data.threat_score||0)*100).toFixed(0)}%;height:100%;border-radius:6px"></div>
+            </div>
+            <span>${((data.threat_score||0)*100).toFixed(0)}% threat level</span>
+        </div>
         <h3>Executive Summary</h3>
-        <pre class="summary-text">${data.summary}</pre>
-        <h3>Conclusion</h3>
-        <p class="conclusion-text">${data.conclusion}</p>
+        <pre class="summary-text" style="white-space:pre-wrap">${data.message || data.summary || "No summary available"}</pre>
+        <h3>Confidence</h3>
+        <p>${((data.confidence||0)*100).toFixed(0)}% overall confidence</p>
     `;
 
     summaryModal.classList.add("active");
@@ -2317,3 +2374,34 @@ function formatTime(timestamp) {
 window.askQuestion = askQuestion;
 window.showMitreDetail = showMitreDetail;
 window.copyToClipboard = copyToClipboard;
+
+
+function handleTerminalLog(data) {
+    const feed = document.getElementById("terminal-feed");
+    if (!feed) return;
+    
+    const line = document.createElement("div");
+    line.style.marginBottom = "2px";
+    
+    // Simple sanitization
+    let text = (data.content || "").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    
+    // Add color for timestamps or tags if desired
+    text = text.replace(/\[(.*?)\]/g, '<span style="color:#88ccff">[$1]</span>');
+    line.innerHTML = text;
+    
+    feed.appendChild(line);
+    
+    // Autoscroll
+    feed.scrollTop = feed.scrollHeight;
+}
+
+// Clear terminal button
+document.addEventListener("DOMContentLoaded", () => {
+    const clearBtn = document.getElementById("clear-term-btn");
+    if (clearBtn) {
+        clearBtn.addEventListener("click", () => {
+            document.getElementById("terminal-feed").innerHTML = "";
+        });
+    }
+});
