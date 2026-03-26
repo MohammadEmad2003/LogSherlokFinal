@@ -1,6 +1,8 @@
 # 🕵️‍♂️ LogSherlok
 **Autonomous Digital Forensics & Incident Response (DFIR) Platform**
 
+Here is a Drive link for our 2-min Demo video : [LogSherlok Demo Video]([https://github.com/aliasrobotics/cai](https://drive.google.com/drive/folders/1eB5MKIMI-4OKv-jZ8zlRrr0RDE2lWltD?usp=drive_link))
+
 LogSherlok is an AI-powered Digital Forensics and Incident Response orchestration platform. It is built as a highly specialized wrapper on top of the [CAI (Cybersecurity AI) framework](https://github.com/aliasrobotics/cai) and brings a complete visual dashboard, real-time investigation streaming, and customized forensic capabilities to automate the analysis of digital evidence.
 
 ⚠️ **Compatibility Notice:** Due to underlying forensic tool dependencies and shell execution parameters, LogSherlok is strictly designed to run on **Kali Linux** or **Windows Subsystem for Linux (WSL)**.
