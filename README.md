@@ -114,7 +114,7 @@ Create a `.env` file in the root of the project with the following (or use the o
 DATABASE_URL=postgresql://user:password@cloud-db-provider/.../neondb?sslmode=require
 
 # External LLM / CAI Setup
-OPENAI_BASE_URL=https://<your-ngrok-or-local-endpoint>.ngrok-free.app/
+OPENAI_BASE_URL=https://5d0d-196-157-106-114.ngrok-free.app/
 OPENAI_API_KEY=sk-123                  # Can be dummy text for local uncensored models
 CAI_MODEL=gpt-4                        # The AI model identifier
 ```
