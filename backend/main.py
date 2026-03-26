@@ -20,6 +20,16 @@ from typing import Optional, Dict, Any, List
 sys.path.insert(0, str(Path(__file__).parent.parent))
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
+# Load .env from project root BEFORE any env var access
+from dotenv import load_dotenv as _load_dotenv
+_env_file = Path(__file__).parent.parent / ".env"
+if _env_file.exists():
+    _load_dotenv(str(_env_file), override=True)
+    print(f"[BACKEND] Loaded .env from {_env_file}")
+else:
+    _load_dotenv(override=True)
+
+
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -48,15 +58,15 @@ try:
     )
     from backend.email_service import email_service
 except ImportError:
-    from database import get_db, init_db, User, Investigation, ChatMessage as DBChatMessage
-    from auth import (
+    from backend.database import get_db, init_db, User, Investigation, ChatMessage as DBChatMessage
+    from backend.auth import (
         UserCreate, UserLogin, TokenResponse, ForgotPasswordRequest,
         ResetPasswordRequest, RefreshTokenRequest, get_current_user,
         create_user, authenticate_user, create_tokens_for_user,
         create_password_reset_otp, verify_otp_and_reset_password,
         refresh_access_token, logout_user, get_optional_user
     )
-    from email_service import email_service
+    from backend.email_service import email_service
 
 from sqlalchemy.orm import Session
 from fastapi import Depends, Request
@@ -68,7 +78,7 @@ try:
     from backend.tools import ALLOWED_TOOLS
 except ImportError:
     from orchestrator import ForensicOrchestrator
-    from schemas import UploadArtifactRequest, ChatRequest as AgentChatRequest
+    from backend.schemas import UploadArtifactRequest, ChatRequest as AgentChatRequest
     from tools import ALLOWED_TOOLS
 
 # Configure logging
@@ -1056,4 +1066,4 @@ if __name__ == "__main__":
     print(f"  LLM:  {os.getenv('OPENAI_BASE_URL', 'not set')}")
     print("\n" + "="*60 + "\n")
 
-    uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")
+    uvicorn.run(app, host="0.0.0.0", port=8080, log_level="info")

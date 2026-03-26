@@ -14,7 +14,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, EmailStr
 
-from database import get_db, User, OTPToken, RefreshToken
+from backend.database import get_db, User, OTPToken, RefreshToken
 
 # Configuration
 SECRET_KEY = os.getenv("JWT_SECRET_KEY", "forensic-agent-secret-key-change-in-production")

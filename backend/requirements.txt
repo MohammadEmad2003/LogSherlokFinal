@@ -22,3 +22,8 @@ gunicorn>=21.2.0
 
 # Type hints
 typing-extensions>=4.9.0
+
+# Authentication
+PyJWT>=2.8.0
+bcrypt>=4.1.0
+SQLAlchemy>=2.0.0

@@ -11,7 +11,7 @@ import traceback
 from typing import List, Dict, Any, Optional, Callable
 from datetime import datetime
 
-from schemas import (
+from backend.schemas import (
     ForensicScenario, AgentStep, Evidence, ModelOutput,
     FullState, DashboardPayload, AttackHypothesis,
     TodoItem, MITRECoverage
@@ -25,7 +25,7 @@ try:
         format_step_for_display, should_continue_investigation
     )
 except ImportError:
-    from utils import (
+    from backend.utils import (
         MITREMapper, StateManager, TodoManager,
         generate_session_id, format_evidence_for_display,
         format_step_for_display, should_continue_investigation
@@ -255,7 +255,7 @@ class ForensicOrchestrator:
                     result = await Runner.run(
                         starting_agent=agent,
                         input=prompt,
-                        max_turns=3,  # Allow agent to make a few tool calls per step
+                        max_turns=5,  # Allow agent to make more tool calls per step for thorough investigation
                     )
 
                     # Parse the agent result
@@ -329,6 +329,7 @@ class ForensicOrchestrator:
                         observation += f" Analysis: {snippet}"
 
                     # Check if the agent indicates the investigation is complete
+                    # Only mark complete if attack scenario is described or flag is found (for CTF)
                     is_complete = any(phrase in agent_output_text.lower() for phrase in [
                         "investigation complete",
                         "analysis is complete",
@@ -336,7 +337,18 @@ class ForensicOrchestrator:
                         "concludes the investigation",
                         "no further analysis needed",
                         "final report",
+                        "attack scenario:",
+                        "attack narrative:",
+                        "flag found:",
+                        "ctf flag:",
+                        "flag{",
+                        "flag:",
                     ])
+                    
+                    # Require minimum steps before allowing completion to ensure thorough investigation
+                    if is_complete and step_number < 5:
+                        # Don't complete too early - continue investigation
+                        is_complete = False
 
                     # Determine confidence based on evidence found
                     confidence = 0.5
@@ -408,6 +420,38 @@ class ForensicOrchestrator:
                 await self._send_step_update(agent_step)
                 for evidence in new_evidence:
                     await self._send_evidence_update(evidence)
+
+                # Send MITRE mappings for new evidence
+                for ev in new_evidence:
+                    for i, tactic in enumerate(ev.mitre_tactics):
+                        technique_id = ev.mitre_techniques[i] if i < len(ev.mitre_techniques) else ""
+                        if technique_id:
+                            await self._send_dashboard_update("mitre_mapping", {
+                                "tactic": tactic,
+                                "technique_id": technique_id,
+                                "technique_name": technique_id,
+                                "evidence_value": ev.value,
+                                "evidence_type": ev.type,
+                            })
+
+                # Send timeline event for this step
+                await self._send_dashboard_update("timeline_event", {
+                    "timestamp": agent_step.timestamp.isoformat(),
+                    "event": action_description or f"Step {step_number} analysis",
+                    "description": observation[:200] if observation else f"Step {step_number} completed",
+                    "severity": "high" if confidence > 0.8 else ("medium" if confidence > 0.5 else "info"),
+                    "step_number": step_number,
+                    "evidence_count": len(new_evidence),
+                })
+
+                # Send progress update
+                progress_pct = min((step_number / self.max_steps) * 100, 95)
+                await self._send_dashboard_update("progress", {
+                    "progress": progress_pct,
+                    "phase": state.current_phase,
+                    "step_number": step_number,
+                    "evidence_total": len(state.evidence),
+                })
 
                 # Check if complete
                 if is_complete:
@@ -489,21 +533,25 @@ Steps Completed: {steps_count}
         # Phase-specific guidance
         guidance = {
             'initialization': f'Start by identifying the artifact type and extracting basic metadata. Run: file "{artifact_path}" and strings "{artifact_path}" | head -200',
-            'initial_analysis': 'Perform broad analysis to understand artifact contents. Look for suspicious strings, IPs, domains, executables.',
-            'deep_analysis': 'Focus on suspicious findings. Extract detailed evidence. Investigate IOCs found.',
-            'threat_hunting': 'Hunt for specific indicators of compromise. Check for malware signatures, C2 communication patterns.',
-            'correlation': 'Connect evidence pieces and build attack timeline. Summarize the attack narrative.',
-            'finalization': 'Summarize all findings. Set action_type to "complete" if done.'
+            'initial_analysis': 'Perform broad analysis to understand artifact contents. Look for suspicious strings, IPs, domains, executables. For memory dumps use: vol -f <file> windows.pslist or linux.pslist',
+            'deep_analysis': 'Focus on suspicious findings. Extract detailed evidence. Investigate IOCs found. Use vol for memory analysis, yara for malware scanning.',
+            'threat_hunting': 'Hunt for specific indicators of compromise. Check for malware signatures, C2 communication patterns. Use vol -f <file> windows.malfind for injection detection.',
+            'correlation': 'Connect evidence pieces and build COMPLETE attack scenario. Document: Initial Access, Execution, Persistence, Privilege Escalation, Defense Evasion, Credential Access, Discovery, Lateral Movement, Collection, C2, Exfiltration, Impact.',
+            'finalization': 'Provide complete attack narrative with all MITRE ATT&CK mappings. Only mark complete if full scenario is documented.'
         }.get(phase, 'Continue the investigation based on current evidence.')
 
         prompt += f"\nGUIDANCE: {guidance}\n"
 
         if steps_count >= self.max_steps - 2:
-            prompt += "\nNOTE: Investigation is nearing the step limit. Please summarize findings and conclude.\n"
+            prompt += "\nNOTE: Investigation is nearing the step limit. Please summarize ALL findings and provide COMPLETE attack scenario before concluding.\n"
 
         prompt += """
 Execute the next most valuable forensic analysis action. Use generic_linux_command to run commands.
-Be specific and explain your reasoning clearly."""
+IMPORTANT: 
+- Use 'vol' command for Volatility3, NOT 'volatility'
+- For memory analysis: vol -f <memory.raw> windows.pslist, vol -f <memory.raw> windows.malfind, etc.
+- Continue until you have a COMPLETE attack scenario or found all flags (for CTF challenges)
+- Be specific and explain your reasoning clearly."""
 
         return prompt
 

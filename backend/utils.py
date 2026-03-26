@@ -10,7 +10,7 @@ import hashlib
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 
-from schemas import (
+from backend.schemas import (
     ModelOutput, Evidence,
     MITRECoverage, AttackHypothesis, TodoItem, FullState, AgentStep
 )
@@ -355,16 +355,77 @@ def format_evidence_for_display(evidence: Evidence) -> Dict[str, Any]:
 
 def format_step_for_display(step: AgentStep) -> Dict[str, Any]:
     """Format agent step for dashboard display"""
+    # Extract tool name from action string (e.g. "generic_linux_command(file ...)" -> "generic_linux_command")
+    action_str = step.action or "Forensic analysis"
+    tool_name = "DFIR Agent"
+    command_str = action_str
+    if '(' in action_str:
+        tool_name = action_str.split('(')[0].strip()
+        # Extract command from arguments if possible
+        try:
+            args_part = action_str.split('(', 1)[1].rstrip(')')
+            if args_part:
+                command_str = args_part[:200]
+        except (IndexError, ValueError):
+            pass
+    elif action_str.startswith('/') or action_str.startswith('strings') or action_str.startswith('file '):
+        tool_name = action_str.split()[0] if action_str.split() else "command"
+        command_str = action_str
+
+    # Determine tool category
+    tool_category = "analysis"
+    if step.action_type == "command":
+        tool_category = "command_execution"
+    elif any(kw in action_str.lower() for kw in ['volatility', 'vol.py', 'vol3']):
+        tool_category = "memory_forensics"
+    elif any(kw in action_str.lower() for kw in ['mmls', 'fls', 'icat', 'fsstat']):
+        tool_category = "disk_forensics"
+    elif any(kw in action_str.lower() for kw in ['tshark', 'tcpdump', 'zeek']):
+        tool_category = "network_forensics"
+    elif any(kw in action_str.lower() for kw in ['yara', 'clamscan', 'strings']):
+        tool_category = "malware_analysis"
+
+    # Collect MITRE data from evidence
+    mitre_tactics = []
+    mitre_techniques = []
+    for ev in step.evidence_found:
+        mitre_tactics.extend(ev.mitre_tactics)
+        mitre_techniques.extend(ev.mitre_techniques)
+    mitre_tactics = list(set(mitre_tactics))
+    mitre_techniques = list(set(mitre_techniques))
+
     return {
         'step_number': step.step_number,
         'phase': step.phase,
+        # Backend canonical fields
         'reasoning': step.reasoning or f"Analysis step {step.step_number}",
-        'action': step.action or "Forensic analysis",
+        'action': action_str,
         'observation': step.observation or "",
         'confidence': step.confidence,
         'evidence_count': len(step.evidence_found),
         'timestamp': step.timestamp.isoformat(),
-        'error': step.error
+        'error': step.error,
+        'action_type': step.action_type or "analysis",
+        # Fields the frontend expects (aliases / derived)
+        'tool': tool_name,
+        'thought': step.reasoning or f"Analysis step {step.step_number}",
+        'command': command_str,
+        'tool_category': tool_category,
+        # MITRE data from this step's evidence
+        'mitre_tactics': mitre_tactics,
+        'mitre_techniques': mitre_techniques,
+        # Evidence items for the step
+        'evidence': [
+            {
+                'type': ev.type,
+                'value': ev.value,
+                'confidence': ev.confidence,
+                'threat_score': ev.threat_score,
+                'mitre_tactics': ev.mitre_tactics,
+                'mitre_techniques': ev.mitre_techniques,
+            }
+            for ev in step.evidence_found
+        ],
     }
 
 

@@ -166,7 +166,11 @@ class DashboardPayload(BaseModel):
     """Payload sent to dashboard via WebSocket"""
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    type: Literal["step", "evidence", "hypothesis", "timeline", "todo", "complete", "error"] = Field(
+    type: Literal[
+        "step", "evidence", "hypothesis", "timeline", "todo", "complete", "error",
+        "progress", "mitre_mapping", "timeline_event", "chat_response",
+        "llm_response", "state_sync", "instruction_ack"
+    ] = Field(
         ...,
         description="Type of update"
     )

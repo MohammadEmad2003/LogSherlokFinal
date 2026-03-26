@@ -24,6 +24,9 @@ class ReportGenerator:
 
     def generate_json_report(self) -> Dict[str, Any]:
         """Generate comprehensive JSON report."""
+        # Generate attack scenario from evidence and hypotheses
+        attack_scenario = self._generate_attack_scenario()
+        
         return {
             "report_metadata": {
                 "report_id": str(uuid.uuid4()),
@@ -33,19 +36,20 @@ class ReportGenerator:
                 "generator": "Autonomous Forensic Orchestrator",
             },
             "artifact_info": {
-                "name": self.session.get("artifact_name"),
-                "type": self.session.get("artifact_type"),
-                "size": self.session.get("artifact_size"),
-                "analyzed_at": self.session.get("created_at"),
+                "name": self.session.get("artifact_name") or "Unknown",
+                "type": self.session.get("artifact_type") or "Unknown",
+                "size": self.session.get("artifact_size") or 0,
+                "analyzed_at": self.session.get("created_at") or datetime.utcnow().isoformat(),
             },
             "executive_summary": {
-                "status": self.session.get("status"),
-                "summary": self.session.get("summary", ""),
-                "conclusion": self.session.get("conclusion", ""),
+                "status": self.session.get("status") or "unknown",
+                "summary": self.session.get("summary") or "Investigation summary not available.",
+                "conclusion": self.session.get("conclusion") or "Investigation conclusion pending.",
                 "threat_level": self._calculate_threat_level(),
                 "total_steps": len(self.session.get("steps", [])),
                 "total_evidence": len(self.session.get("evidence", [])),
             },
+            "attack_scenario": attack_scenario,
             "investigation_workflow": self._generate_workflow_section(),
             "evidence": self._generate_evidence_section(),
             "timeline": self._generate_timeline_section(),
@@ -394,13 +398,18 @@ class ReportGenerator:
 
         <section class="section">
             <h2>Executive Summary</h2>
-            <p><strong>Artifact:</strong> {json_report['artifact_info']['name']} ({json_report['artifact_info']['type']})</p>
-            <p><strong>Threat Level:</strong> <span class="severity-{json_report['executive_summary']['threat_level'].lower()}">{json_report['executive_summary']['threat_level']}</span></p>
+            <p><strong>Artifact:</strong> {json_report['artifact_info']['name'] or 'Unknown'} ({json_report['artifact_info']['type'] or 'Unknown'})</p>
+            <p><strong>Threat Level:</strong> <span class="severity-{(json_report['executive_summary']['threat_level'] or 'low').lower()}">{json_report['executive_summary']['threat_level'] or 'Unknown'}</span></p>
             <p><strong>Analysis Steps:</strong> {json_report['executive_summary']['total_steps']}</p>
             <p><strong>Evidence Items:</strong> {json_report['executive_summary']['total_evidence']}</p>
             <div style="margin-top: 1rem;">
-                <pre style="white-space: pre-wrap; background: var(--bg-tertiary); padding: 1rem; border-radius: 8px;">{json_report['executive_summary']['summary']}</pre>
+                <pre style="white-space: pre-wrap; background: var(--bg-tertiary); padding: 1rem; border-radius: 8px;">{json_report['executive_summary']['summary'] or 'Summary pending...'}</pre>
             </div>
+        </section>
+
+        <section class="section">
+            <h2>Attack Scenario</h2>
+            {self._render_attack_scenario_html(json_report.get('attack_scenario', {}))}
         </section>
 
         <section class="section">
@@ -446,7 +455,7 @@ class ReportGenerator:
 
         <section class="section">
             <h2>Conclusion</h2>
-            <p>{json_report['executive_summary']['conclusion']}</p>
+            <p>{json_report['executive_summary']['conclusion'] or 'Investigation conclusion pending.'}</p>
         </section>
     </div>
 </body>
@@ -638,6 +647,68 @@ class ReportGenerator:
                     iocs[ev_type].append(ev.get("value"))
         return iocs
 
+    def _generate_attack_scenario(self) -> Dict[str, Any]:
+        """Generate attack scenario from investigation findings."""
+        steps = self.session.get("steps", [])
+        evidence = self.session.get("evidence", [])
+        hypotheses = self.session.get("hypotheses", [])
+        mitre = self.session.get("mitre_coverage", {})
+        
+        # Extract attack phases from evidence and steps
+        phases = {
+            "initial_access": [],
+            "execution": [],
+            "persistence": [],
+            "privilege_escalation": [],
+            "defense_evasion": [],
+            "credential_access": [],
+            "discovery": [],
+            "lateral_movement": [],
+            "collection": [],
+            "command_and_control": [],
+            "exfiltration": [],
+            "impact": [],
+        }
+        
+        # Map evidence to attack phases based on MITRE tactics
+        for ev in evidence:
+            tactics = ev.get("mitre_tactics", [])
+            for tactic in tactics:
+                tactic_key = tactic.lower().replace("-", "_").replace(" ", "_")
+                if tactic_key in phases:
+                    phases[tactic_key].append({
+                        "type": ev.get("type", "unknown"),
+                        "value": ev.get("value", ""),
+                        "confidence": ev.get("confidence", 0),
+                    })
+        
+        # Build narrative from steps
+        narrative_parts = []
+        for step in steps[-10:]:  # Use last 10 steps for narrative
+            if step.get("observation"):
+                narrative_parts.append(step.get("observation", "")[:200])
+        
+        # Build primary hypothesis
+        primary_hypothesis = None
+        if hypotheses:
+            sorted_hyps = sorted(hypotheses, key=lambda x: x.get("confidence", 0), reverse=True)
+            primary_hypothesis = {
+                "hypothesis": sorted_hyps[0].get("hypothesis", "Unknown attack pattern"),
+                "confidence": sorted_hyps[0].get("confidence", 0),
+                "supporting_evidence": sorted_hyps[0].get("supporting_evidence", []),
+            }
+        
+        return {
+            "narrative": " → ".join(narrative_parts) if narrative_parts else "Attack scenario analysis in progress.",
+            "phases": {k: v for k, v in phases.items() if v},  # Only include non-empty phases
+            "primary_hypothesis": primary_hypothesis,
+            "mitre_techniques_used": list(set(
+                tech for techs in mitre.values() if isinstance(techs, list) for tech in techs
+            )) if isinstance(mitre, dict) else [],
+            "total_evidence_items": len(evidence),
+            "investigation_steps": len(steps),
+        }
+
     def _generate_recommendations(self) -> List[str]:
         """Generate recommendations based on findings."""
         recommendations = [
@@ -656,20 +727,33 @@ class ReportGenerator:
 
     def _render_workflow_html(self, workflow: List[Dict]) -> str:
         """Render workflow as HTML."""
+        if not workflow:
+            return "<p>No investigation workflow steps recorded yet.</p>"
         html = ""
         for step in workflow:
-            input_str = json.dumps(step.get("input", {}), indent=2)
-            output_str = json.dumps(step.get("output", {}).get("parsed", {}), indent=2)
+            input_data = step.get("input", {})
+            output_data = step.get("output", {})
+            input_str = json.dumps(input_data, indent=2) if input_data else "{}"
+            output_parsed = output_data.get("parsed", {}) if isinstance(output_data, dict) else {}
+            output_str = json.dumps(output_parsed, indent=2) if output_parsed else "{}"
+            
+            step_num = step.get('step_number', '?')
+            tool = step.get('tool') or step.get('action_type') or 'Analysis'
+            phase = step.get('phase') or 'Unknown'
+            thought = step.get('thought') or step.get('reasoning') or 'N/A'
+            action = step.get('action') or 'N/A'
+            evidence_count = step.get('evidence_extracted', 0)
+            next_reasoning = step.get('next_step_reasoning') or ''
 
             html += f"""
             <div class="step-card">
                 <div class="step-header">
-                    <span class="step-number">Step {step.get('step_number')}</span>
-                    <span class="tool-name">{step.get('tool')}</span>
-                    <span style="color: var(--text-secondary);">{step.get('phase')}</span>
+                    <span class="step-number">Step {step_num}</span>
+                    <span class="tool-name">{tool}</span>
+                    <span style="color: var(--text-secondary);">{phase}</span>
                 </div>
-                <p class="thought"><strong>Thought:</strong> {step.get('thought', '')[:200]}...</p>
-                <p class="action"><strong>Action:</strong> {step.get('action', '')[:200]}...</p>
+                <p class="thought"><strong>Thought:</strong> {thought[:200]}...</p>
+                <p class="action"><strong>Action:</strong> {action[:200]}...</p>
                 <div class="io-section">
                     <div class="io-box">
                         <h4>Input</h4>
@@ -680,21 +764,25 @@ class ReportGenerator:
                         <pre>{output_str[:500]}</pre>
                     </div>
                 </div>
-                <p><strong>Evidence Extracted:</strong> {step.get('evidence_extracted', 0)} items</p>
-                <p style="color: var(--text-secondary);"><strong>Next Step Reasoning:</strong> {step.get('next_step_reasoning', '')}</p>
+                <p><strong>Evidence Extracted:</strong> {evidence_count} items</p>
+                <p style="color: var(--text-secondary);"><strong>Next Step Reasoning:</strong> {next_reasoning}</p>
             </div>
             """
         return html
 
     def _render_evidence_html(self, evidence: List[Dict]) -> str:
         """Render evidence as HTML cards."""
+        if not evidence:
+            return "<p>No evidence collected yet.</p>"
         html = ""
         for ev in evidence[:20]:  # Limit to 20 for HTML
-            confidence = ev.get("confidence", 0) * 100
+            confidence = (ev.get("confidence", 0) or 0) * 100
+            ev_type = ev.get('type', 'unknown') or 'unknown'
+            ev_value = ev.get('value', '') or ''
             html += f"""
             <div class="evidence-card">
-                <div class="type">{ev.get('type', 'unknown')}</div>
-                <div class="value">{ev.get('value', '')[:100]}</div>
+                <div class="type">{ev_type}</div>
+                <div class="value">{ev_value[:100]}</div>
                 <div class="confidence">
                     <span>Confidence:</span>
                     <div class="confidence-bar">
@@ -725,32 +813,107 @@ class ReportGenerator:
             """
         return html
 
+    def _render_attack_scenario_html(self, scenario: Dict[str, Any]) -> str:
+        """Render attack scenario as HTML."""
+        if not scenario:
+            return "<p>Attack scenario analysis pending...</p>"
+        
+        narrative = scenario.get("narrative", "No narrative available yet.")
+        phases = scenario.get("phases", {})
+        primary_hyp = scenario.get("primary_hypothesis")
+        mitre_techs = scenario.get("mitre_techniques_used", [])
+        
+        html = f"""
+        <div style="margin-bottom: 1.5rem;">
+            <h3 style="color: var(--accent-purple);">Attack Narrative</h3>
+            <p style="background: var(--bg-tertiary); padding: 1rem; border-radius: 8px; line-height: 1.8;">
+                {narrative}
+            </p>
+        </div>
+        """
+        
+        if primary_hyp:
+            conf = primary_hyp.get("confidence", 0) * 100
+            html += f"""
+            <div style="margin-bottom: 1.5rem;">
+                <h3 style="color: var(--accent-yellow);">Primary Attack Hypothesis</h3>
+                <div style="background: var(--bg-tertiary); padding: 1rem; border-radius: 8px; border-left: 4px solid var(--accent-yellow);">
+                    <p><strong>{primary_hyp.get('hypothesis', 'Unknown')}</strong></p>
+                    <p style="color: var(--accent-green);">Confidence: {conf:.0f}%</p>
+                </div>
+            </div>
+            """
+        
+        if phases:
+            html += """
+            <h3 style="color: var(--accent-blue);">Attack Phases (MITRE ATT&CK)</h3>
+            <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 1rem;">
+            """
+            for phase_name, phase_evidence in phases.items():
+                phase_display = phase_name.replace("_", " ").title()
+                evidence_html = "".join(
+                    f'<div style="font-family: monospace; font-size: 0.85rem; margin: 0.25rem 0;">• {ev.get("value", "")[:50]}</div>'
+                    for ev in phase_evidence[:3]
+                )
+                if len(phase_evidence) > 3:
+                    evidence_html += f'<div style="color: var(--text-secondary);">... and {len(phase_evidence) - 3} more</div>'
+                
+                html += f"""
+                <div style="background: var(--bg-tertiary); padding: 1rem; border-radius: 8px;">
+                    <h4 style="color: var(--accent-purple); margin-bottom: 0.5rem;">{phase_display}</h4>
+                    <div style="color: var(--text-secondary);">{len(phase_evidence)} evidence items</div>
+                    {evidence_html}
+                </div>
+                """
+            html += "</div>"
+        
+        if mitre_techs:
+            html += f"""
+            <div style="margin-top: 1.5rem;">
+                <h3 style="color: var(--accent-red);">MITRE ATT&CK Techniques Used</h3>
+                <div style="display: flex; flex-wrap: wrap; gap: 0.5rem;">
+                    {''.join(f'<span class="technique-tag">{t}</span>' for t in mitre_techs[:15])}
+                </div>
+            </div>
+            """
+        
+        return html
+
     def _render_mitre_html(self, mitre_mapping: Dict[str, List[str]]) -> str:
         """Render MITRE mapping as HTML."""
+        if not mitre_mapping:
+            return "<p>No MITRE ATT&CK mappings identified yet.</p>"
         html = ""
         for tactic, techniques in mitre_mapping.items():
+            if not isinstance(techniques, list):
+                continue
             techniques_html = "".join(f'<span class="technique-tag">{t}</span>' for t in techniques)
             html += f"""
             <div class="mitre-tactic">
-                <h4>{tactic}</h4>
+                <h4>{tactic or 'Unknown Tactic'}</h4>
                 {techniques_html}
             </div>
             """
-        return html
+        return html if html else "<p>No MITRE ATT&CK mappings identified yet.</p>"
 
     def _render_hypotheses_html(self, hypotheses: List[Dict]) -> str:
         """Render hypotheses as HTML."""
+        if not hypotheses:
+            return "<p>No attack hypotheses generated yet.</p>"
         html = ""
         for hyp in hypotheses:
-            confidence = hyp.get("confidence", 0)
+            confidence = hyp.get("confidence", 0) or 0
             conf_class = "high-confidence" if confidence >= 0.8 else "medium-confidence"
+            title = hyp.get('title') or hyp.get('hypothesis') or 'Unknown Hypothesis'
+            threat_actor = hyp.get('threat_actor') or 'Unknown'
+            objective = hyp.get('objective') or hyp.get('description') or 'Unknown'
             html += f"""
             <div class="hypothesis-card">
-                <h3>{hyp.get('title', 'Unknown')}
+                <h3>{title}
                     <span class="confidence-badge {conf_class}">{confidence*100:.0f}% confidence</span>
                 </h3>
-                <p><strong>Threat Actor:</strong> {hyp.get('threat_actor', 'Unknown')}</p>
-                <p><strong>Objective:</strong> {hyp.get('objective', 'Unknown')}</p>
+                <p><strong>Threat Actor:</strong> {threat_actor}</p>
+                <p><strong>Objective:</strong> {objective}</p>
             </div>
             """
         return html
