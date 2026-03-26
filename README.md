@@ -101,6 +101,8 @@ LogSherlok requires extensive backend packages including DB connectors and pytho
 
 ```bash
 python3 -m pip install -r backend/requirements.txt --break-system-packages
+python3 -m pip install cai-framework
+python3 -m pip install -r requriments.txt
 python3 -m pip install sqlalchemy psycopg2-binary passlib bcrypt python-jose python-multipart pydantic-settings python-dotenv --break-system-packages
 ```
 
