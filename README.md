@@ -126,7 +126,7 @@ python3 run_server.py
 
 ### 5. Access the Dashboard
 Navigate your browser to:
-[http://localhost:8000/](http://localhost:8000/)
+[http://localhost:8000/](http://localhost:8080/)
 
 1. Register an account natively on the page.
 2. Upload a forensic artifact (like a disk image, memory dump, or log file).
